@@ -9,9 +9,14 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "cdt2d": "^1.0.0",
+    "flo-mat": "^3.0.3",
+    "fs": "^0.0.1-security",
+    "graphlib": "^2.1.8",
     "next": "16.1.0",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "three": "^0.182.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
