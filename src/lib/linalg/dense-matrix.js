@@ -1,4 +1,4 @@
-let Module = require('./linear-algebra-asm.js');
+let Module = require('./linear-algebra-asm.cjs');
 let memoryManager = require('./emscripten-memory-manager.js');
 
 class DenseMatrix {
