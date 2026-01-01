@@ -117,12 +117,16 @@ class MeshGen {
         this.stitchJunctions();
 
         // NOTE: runLSMesh is disabled due to ES module compatibility issues with Emscripten
-        // let constraints = [];
-        // for (let i = 0; i < nC; i++)
-        // for (let j = 0; j < this.chordBufSize[i]; j++)
-        //     constraints.push(this.chordOffset[i] + j);
-        // 
-        // geo3d.runLSMesh(this.allVertices, this.allFaces, constraints);
+        let constraints = [];
+        for (let i = 0; i < nC; i++)
+        for (let j = 0; j < this.chordBufSize[i]; j++)
+            constraints.push(this.chordOffset[i] + j);
+        
+        geo3d.runLeastSquaresMesh(this.allVertices, this.allFaces, constraints);
+
+        let result = geo3d.runIsometricRemesh(this.allVertices, this.allFaces);
+        this.allVertices = result.vertices;
+        this.allFaces = result.faces;
     }
     private buildTriangulation() {
         if (isClockwise(this.polygon)) {
@@ -632,15 +636,7 @@ class MeshGen {
             }
             
             var faces = cdt2d(points, edges, {exterior: false});
-
-            console.log("Number of points: ", points.length);
-            console.log("Number of edges: ", edges.length);
-            console.log("Number of faces: ", faces.length);
-
-            if (faces.length === 0) {
-                console.log(edges);
-            }
-
+            
             let dir0 = this.allVertices[this.chordOffset[c0] + 1].z > 0 ? 1 : -1;
             let dir1 = this.allVertices[this.chordOffset[c1] + 1].z > 0 ? 1 : -1;
             let dir2 = this.allVertices[this.chordOffset[c2] + 1].z > 0 ? 1 : -1;
@@ -648,29 +644,6 @@ class MeshGen {
             let size0 = this.chordBufSize[c0];
             let size1 = this.chordBufSize[c1];
             let size2 = this.chordBufSize[c2];
-
-            let meshCoord = new Array(points.length).fill(new Vector(0, 0, 0));
-            let meshGraph = new Graph();
-            let meshConstraints = [];
-
-            for (let i = 0; i < points.length; i++) {
-                if (i < offset[0]) {
-                    meshCoord[i] = new Vector(points[i][0], points[i][1], 0);
-                } else if (i < offset[1]) {
-                    meshCoord[i] = this.allVertices[this.chordOffset[c0] + (i-offset[0]) + 1];
-                } else if (i < offset[2]) {
-                    meshCoord[i] = this.allVertices[this.chordOffset[c1] + (i-offset[1]) + 1];
-                } else if (i < offset[3]) {
-                    meshCoord[i] = this.allVertices[this.chordOffset[c2] + (i-offset[2]) + 1];
-                } else {
-                    meshCoord[i] = new Vector(points[i][0], points[i][1], 0);
-                }
-                meshCoord[i].z = Math.abs(meshCoord[i].z);
-                meshGraph.setNode(i);
-
-                if (i >= offset[0])
-                    meshConstraints.push(i);
-            }
 
             for (let f of faces) {
                 let facePos = [];
@@ -699,18 +672,27 @@ class MeshGen {
                 }
                 this.allFaces.push(facePos);
                 this.allFaces.push(faceNeg);
-
-                for (let u of f)
-                for (let v of f)    if (u != v)
-                    meshGraph.setEdge(u, v);
             }
-            for (let t = 0; t < 50; t++)
-                geo3d.LaplacianSmooth(meshCoord, meshConstraints, meshGraph, 1);
+            for (let i = 0; i < 3; i++) {
+                let j0 = corner2index[i*2];
+                let j1 = corner2index[i*2+1];
 
-            for (let i = 0; i < points.length; i++) {
-                let p = meshCoord[i];
-                this.allVertices.push(new Vector(p.x, p.y, p.z));
-                this.allVertices.push(new Vector(p.x, p.y, -p.z));
+                let c0 = junction[Math.floor(j0/2)];
+                let c1 = junction[Math.floor(j1/2)];
+
+                let idx0 = this.chordOffset[c0] + (j0%2)*this.chordBufSize[c0]/2;
+
+                let base = this.chordOffset[c1];
+                let size = this.chordBufSize[c1];
+                let offset = (j1%2)*size/2;
+
+                this.allFaces.push([idx0, base+offset, base+(offset+1)%size]);
+                this.allFaces.push([idx0, base+offset, base+(offset+size-1)%size]);
+            }
+            for (let i = 0; i < offset[0]; i++) {
+                let p = points[i];
+                this.allVertices.push(new Vector(p[0], p[1], 1));
+                this.allVertices.push(new Vector(p[0], p[1], -1));
             }
         }
     }
