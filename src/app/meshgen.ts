@@ -69,7 +69,7 @@ class MeshGen {
     private chordLengths: number[] = [];
     private chordGraph: any;
     private chordMap: Map<string, number> = new Map();
-    private chordCaps: number[] = [];
+    private chordCaps: number[][] = [];
     private chordJunctions: number[][] = [];
     private chordOffset: number[] = [];
     private chordBufSize: number[] = [];
@@ -124,9 +124,9 @@ class MeshGen {
         
         geo3d.runLeastSquaresMesh(this.allVertices, this.allFaces, constraints);
 
-        let result = geo3d.runIsometricRemesh(this.allVertices, this.allFaces);
-        this.allVertices = result.vertices;
-        this.allFaces = result.faces;
+        // let result = geo3d.runIsometricRemesh(this.allVertices, this.allFaces);
+        // this.allVertices = result.vertices;
+        // this.allFaces = result.faces;
     }
     private buildTriangulation() {
         if (isClockwise(this.polygon)) {
@@ -266,24 +266,28 @@ class MeshGen {
         }
         for (let f of this.mesh2d.faces) {
             let chordIndices = [];
+            let chordCorner = null;
 
             for (let e of f.adjacentEdges()) {
                 let h = e.halfedge;
                 let i0 = h.vertex.index;
-                let i1 = h.twin.vertex.index;
+                let i1 = h.next.vertex.index;
+                let i2 = h.next.next.vertex.index;
                 if (i0 > i1) {
                     [i0, i1] = [i1, i0];
                 }
                 let key = `${i0}-${i1}`;
                 let chordIndex = this.chordMap.get(key);
-                if (chordIndex !== undefined)
+                if (chordIndex !== undefined) {
                     chordIndices.push(chordIndex);
+                    chordCorner = i2;
+                }
             }
             if (chordIndices.length === 2) {
                 this.chordGraph.setEdge(chordIndices[0], chordIndices[1]);
                 this.chordGraph.setEdge(chordIndices[1], chordIndices[0]);
             }
-            if (chordIndices.length === 1)  this.chordCaps.push(chordIndices[0]);
+            if (chordIndices.length === 1)  this.chordCaps.push([chordIndices[0], chordCorner]);
             if (chordIndices.length === 3)  this.chordJunctions.push(chordIndices);
         }
         console.log(this.chordCaps.length, this.chordJunctions.length);
@@ -453,10 +457,16 @@ class MeshGen {
     }
     
     stitchCaps() {
-        for (let i of this.chordCaps) {
-            let c = this.chordAxis[i];
+        for (let [i, o] of this.chordCaps) {
             let d = this.chordDirs[i];
-            let r = this.chordLengths[i] / 2;
+            let ci = this.chordAxis[i];
+            let ri = this.chordLengths[i] / 2;
+            let co = new Vector(
+                this.polygon[o].x,
+                this.polygon[o].y,
+                0
+            );
+            let h = co.minus(ci).norm();
 
             let capOffset = [this.chordOffset[i]];
             let capDisc: Vector[][] = [
@@ -465,9 +475,11 @@ class MeshGen {
                     this.chordOffset[i] + this.chordBufSize[i]
             )];
 
+            let r = ri;
+
             while (r > 1.2 * this.isodistance) {
                 r -= this.isodistance;
-                let disc = this.generateCircle(c, d, r);
+                let disc = this.generateCircle(co.plus(ci.minus(co).times(r/ri)), d, r);
                 
                 capDisc.push(disc);
                 capOffset.push(this.allVertices.length);
@@ -475,9 +487,9 @@ class MeshGen {
                 for (let v of disc)
                     this.allVertices.push(v);
             }
-            capDisc.push([c]);
+            capDisc.push([co]);
             capOffset.push(this.allVertices.length);
-            this.allVertices.push(c);
+            this.allVertices.push(co);
             
             for (let j = 1; j < capDisc.length; j++) {
                 let n1 = capDisc[j-1].length;
