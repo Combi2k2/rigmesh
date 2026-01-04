@@ -95,8 +95,8 @@ class MeshGen {
             this.chordDirs[i].normalize();
         }
         for (let i = 0; i < 50; i++) {
-            geo3d.LaplacianSmooth(this.chordDirs, [], this.chordGraph, 0.5);
-            geo3d.LaplacianSmooth(this.chordAxis, [], this.chordGraph, 0.5);
+            geo3d.runLaplacianSmooth(this.chordDirs, [], this.chordGraph, 0.5);
+            geo3d.runLaplacianSmooth(this.chordAxis, [], this.chordGraph, 0.5);
             
             for (let j = 0; j < nC; j++)
                 this.chordDirs[j].normalize();
@@ -123,10 +123,8 @@ class MeshGen {
             constraints.push(this.chordOffset[i] + j);
         
         geo3d.runLeastSquaresMesh(this.allVertices, this.allFaces, constraints);
-
-        // let result = geo3d.runIsometricRemesh(this.allVertices, this.allFaces);
-        // this.allVertices = result.vertices;
-        // this.allFaces = result.faces;
+        geo3d.runFaceOrientation(this.allVertices, this.allFaces);
+        geo3d.runIsometricRemesh(this.allVertices, this.allFaces, 6);
     }
     private buildTriangulation() {
         if (isClockwise(this.polygon)) {
