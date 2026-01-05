@@ -14,6 +14,11 @@ interface Mesh3DData {
   faces: number[][];
 }
 
+interface SkeletonData {
+  nodes: { x: number; y: number; z: number }[];
+  edges: [number, number][];
+}
+
 export default function RigMeshPage() {
   const [exportedPaths, setExportedPaths] = useState<Point[][]>([]);
   const [currentTriangulation, setCurrentTriangulation] = useState<{
@@ -21,6 +26,7 @@ export default function RigMeshPage() {
     faces: number[][];
   } | null>(null);
   const [mesh3D, setMesh3D] = useState<Mesh3DData | null>(null);
+  const [skeleton, setSkeleton] = useState<SkeletonData | null>(null);
   const [latestPath, setLatestPath] = useState<Point[] | null>(null);
   const [isodistance, setIsodistance] = useState<number>(10);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('3d');
@@ -60,9 +66,64 @@ export default function RigMeshPage() {
           vertices: mesh3DData.vertices.length,
           faces: mesh3DData.faces.length
         });
+
+        // Generate skeleton
+        try {
+          const skeletonGraph = meshGen.generateSkeleton(50, 50);
+          const skeletonNodes: { x: number; y: number; z: number }[] = [];
+          const skeletonEdges: [number, number][] = [];
+          
+          // Extract nodes from graph
+          const nodeMap = new Map<number, number>();
+          let nodeIndex = 0;
+          
+          skeletonGraph.nodes().forEach((nodeId) => {
+            const nodeData = skeletonGraph.node(nodeId);
+            // Handle both Vector and array formats (graphlib may store as array)
+            let pos: any = nodeData;
+            if (Array.isArray(nodeData) && nodeData.length > 0) {
+              pos = nodeData[0];
+            }
+            
+            // Extract x, y, z from Vector object
+            skeletonNodes.push({
+              x: pos?.x ?? 0,
+              y: pos?.y ?? 0,
+              z: pos?.z ?? 0
+            });
+            nodeMap.set(nodeId, nodeIndex);
+            nodeIndex++;
+          });
+          
+          // Extract edges from graph
+          skeletonGraph.edges().forEach((edge) => {
+            const startIdx = nodeMap.get(edge.v);
+            const endIdx = nodeMap.get(edge.w);
+            if (startIdx !== undefined && endIdx !== undefined) {
+              skeletonEdges.push([startIdx, endIdx]);
+            }
+          });
+          
+          if (skeletonNodes.length > 0) {
+            setSkeleton({
+              nodes: skeletonNodes,
+              edges: skeletonEdges
+            });
+            console.log('Skeleton generated:', {
+              nodes: skeletonNodes.length,
+              edges: skeletonEdges.length
+            });
+          } else {
+            setSkeleton(null);
+          }
+        } catch (error) {
+          console.error('Error generating skeleton:', error);
+          setSkeleton(null);
+        }
       } else {
         console.warn('Empty 3D mesh generated');
         setMesh3D(null);
+        setSkeleton(null);
       }
     } catch (error) {
       console.error('Error processing mesh:', error);
@@ -131,7 +192,7 @@ export default function RigMeshPage() {
           {viewMode === '2d' ? (
             <Viewport triangulation={currentTriangulation} />
           ) : (
-            <Viewport3D mesh={mesh3D} mesh2d={currentTriangulation} />
+            <Viewport3D mesh={mesh3D} mesh2d={currentTriangulation} skeleton={skeleton} />
           )}
         </div>
         <div className="bg-gray-100 dark:bg-gray-800 border-t border-gray-300 dark:border-gray-700 p-3 space-y-3">

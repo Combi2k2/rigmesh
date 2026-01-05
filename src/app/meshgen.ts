@@ -85,7 +85,7 @@ class MeshGen {
         this.pruneTriangulation();
         this.buildChordGraph();
 
-        let nC = this.chordGraph.nodes().length;
+        let nC = this.chordGraph.nodeCount();
         for (let i = 0; i < nC; i++) {
             let dir = this.chordDirs[i];
             this.chordDirs[i] = new Vector(
@@ -385,7 +385,7 @@ class MeshGen {
         return faces;
     }
     private generateCylinders() {
-        let nC = this.chordGraph.nodes().length;
+        let nC = this.chordGraph.nodeCount();
         let visited = new Array(nC).fill(false);
 
         this.chordOffset = new Array(nC).fill(0);
@@ -705,6 +705,105 @@ class MeshGen {
                 this.allVertices.push(new Vector(p[0], p[1], -1));
             }
         }
+    }
+
+    generateSkeleton(boneDeviationThreshold: number, boneLengthThreshold: number) {
+        let g = new Graph();
+        let Q = new Queue();
+        let vertIdx = this.chordAxis.length;
+
+        for (let i = 0; i < this.chordAxis.length; i++) {
+            g.setNode(i, this.chordAxis[i]);
+            Q.push(i);
+        }
+        for (let e of this.chordGraph.edges())
+            g.setEdge(e.v, e.w);
+
+        while (Q.size() > 0) {
+            let i = Q.pop();
+            let p = g.node(i);
+
+            let neighbors = g.outEdges(i).map(e => e.w);
+            if (neighbors.length !== 2)
+                continue;
+
+            let n0 = parseInt(neighbors[0]);
+            let n1 = parseInt(neighbors[1]);
+
+            let p0 = g.node(n0);
+            let p1 = g.node(n1);
+
+            let axisDir = p1.minus(p0).unit();
+            let baseDir = axisDir.cross(new Vector(0, 0, 1)).unit();
+
+            let a1 = p0.plus(baseDir.times(this.chordLengths[n0]/2));
+            let b1 = p1.plus(baseDir.times(this.chordLengths[n1]/2));
+            let a2 = p0.minus(baseDir.times(this.chordLengths[n0]/2));
+            let b2 = p1.minus(baseDir.times(this.chordLengths[n1]/2));
+
+            let chordDir = this.chordDirs[i];
+            if (chordDir.dot(baseDir) < 0)
+                chordDir = chordDir.times(-1);
+
+            let c1 = p.plus(chordDir.times(this.chordLengths[i]/2));
+            let c2 = p.minus(chordDir.times(this.chordLengths[i]/2));
+
+            let side1 = a1.minus(b1).unit();
+            let side2 = a2.minus(b2).unit();
+
+            let v0 = p.minus(p0);
+            let v1 = c1.minus(b1);
+            let v2 = c2.minus(b2);
+
+            v0 = v0.minus(axisDir.times(v0.dot(axisDir)));
+            v1 = v1.minus(side1.times(v1.dot(side1)));
+            v2 = v2.minus(side2.times(v2.dot(side2)));
+
+            let error = v0.norm() + 0.5 * (v1.norm() + v2.norm());
+            if (error < boneDeviationThreshold) {
+                g.setEdge(n0, n1);
+                g.setEdge(n1, n0);
+                g.removeNode(i);
+            }
+        }
+        for (let [c0, c1, c2] of this.chordJunctions) {
+            let p0 = g.node(c0);
+            let p1 = g.node(c1);
+            let p2 = g.node(c2);
+            let barycenter = p0.plus(p1).plus(p2).times(1/3);
+            g.setNode(vertIdx, barycenter);
+            g.setEdge(c0, vertIdx); g.setEdge(vertIdx, c0);
+            g.setEdge(c1, vertIdx); g.setEdge(vertIdx, c1);
+            g.setEdge(c2, vertIdx); g.setEdge(vertIdx, c2);
+            vertIdx++;
+        }
+        for (let e of g.edges())
+            Q.push([e.v, e.w]);
+
+        while (Q.size() > 0) {
+            let [u, v] = Q.pop();
+            if (!g.hasEdge(u, v))
+                continue;
+
+            let p0 = g.node(u);
+            let p1 = g.node(v);
+            let dist = p1.minus(p0).norm();
+            if (dist < boneLengthThreshold) {
+                for (let e of g.outEdges(v))
+                    if (e.w !== u) {
+                        g.setEdge(u, e.w);
+                        g.setEdge(e.w, u);
+                    }
+                
+                g.removeNode(v);
+                g.setNode(u, p0.plus(p1).times(0.5));
+
+                for (let e of g.outEdges(u))
+                    Q.push([u, e.w]);
+            }
+        }
+        
+        return g;
     }
 
     getChordAxis() {

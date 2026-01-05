@@ -14,12 +14,18 @@ interface Mesh2DData {
     faces: number[][];
 }
 
+interface SkeletonData {
+    nodes: { x: number; y: number; z: number }[];
+    edges: [number, number][];
+}
+
 interface Viewport3DProps {
     mesh: Mesh3DData | null;
     mesh2d?: Mesh2DData | null;
+    skeleton?: SkeletonData | null;
 }
 
-export default function Viewport3D({ mesh, mesh2d }: Viewport3DProps) {
+export default function Viewport3D({ mesh, mesh2d, skeleton }: Viewport3DProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const sceneRef = useRef<THREE.Scene | null>(null);
     const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -29,6 +35,7 @@ export default function Viewport3D({ mesh, mesh2d }: Viewport3DProps) {
     const wireframeRef = useRef<THREE.LineSegments | null>(null);
     const mesh2dRef = useRef<THREE.Mesh | null>(null);
     const wireframe2dRef = useRef<THREE.LineSegments | null>(null);
+    const skeletonRef = useRef<THREE.Group | null>(null);
     const centerRef = useRef<THREE.Vector3>(new THREE.Vector3());
     const keysPressed = useRef<Set<string>>(new Set());
 
@@ -175,6 +182,25 @@ export default function Viewport3D({ mesh, mesh2d }: Viewport3DProps) {
         }
     };
 
+    // Helper function to clean up skeleton
+    const cleanupSkeleton = (skeletonGroup: THREE.Group | null, scene: THREE.Scene) => {
+        if (skeletonGroup) {
+            scene.remove(skeletonGroup);
+            skeletonGroup.traverse((child) => {
+                if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
+                    child.geometry.dispose();
+                    if (child.material) {
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(m => m.dispose());
+                        } else {
+                            child.material.dispose();
+                        }
+                    }
+                }
+            });
+        }
+    };
+
     // Update 2D mesh when data changes
     useEffect(() => {
         if (!sceneRef.current) return;
@@ -264,11 +290,12 @@ export default function Viewport3D({ mesh, mesh2d }: Viewport3DProps) {
         });
         geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
-        // Faces (indices)
+        // Faces (indices) - reverse winding order to fix inverted mesh
         const indices: number[] = [];
         mesh.faces.forEach(face => {
             if (face.length === 3) {
-                indices.push(face[0], face[1], face[2]);
+                // Reverse the order to fix inverted mesh (Three.js expects CCW winding)
+                indices.push(face[0], face[2], face[1]);
             }
         });
         geometry.setIndex(indices);
@@ -324,6 +351,75 @@ export default function Viewport3D({ mesh, mesh2d }: Viewport3DProps) {
         });
 
     }, [mesh]);
+
+    // Update skeleton when data changes
+    useEffect(() => {
+        if (!sceneRef.current) return;
+        const scene = sceneRef.current;
+
+        // Remove old skeleton
+        cleanupSkeleton(skeletonRef.current, scene);
+        skeletonRef.current = null;
+
+        if (!skeleton || skeleton.nodes.length === 0) {
+            return;
+        }
+
+        // Create skeleton group
+        const skeletonGroup = new THREE.Group();
+
+        // Create nodes (spheres)
+        const nodeGeometry = new THREE.SphereGeometry(2, 8, 8);
+        const nodeMaterial = new THREE.MeshBasicMaterial({ color: 0xff6b6b });
+        
+        skeleton.nodes.forEach((node) => {
+            const sphere = new THREE.Mesh(nodeGeometry, nodeMaterial);
+            sphere.position.set(
+                node.x - centerRef.current.x,
+                node.y - centerRef.current.y,
+                node.z - centerRef.current.z
+            );
+            skeletonGroup.add(sphere);
+        });
+
+        // Create edges (lines)
+        if (skeleton.edges.length > 0) {
+            const edgePositions = new Float32Array(skeleton.edges.length * 2 * 3);
+            let index = 0;
+            
+            skeleton.edges.forEach(([startIdx, endIdx]) => {
+                const start = skeleton.nodes[startIdx];
+                const end = skeleton.nodes[endIdx];
+                
+                edgePositions[index++] = start.x - centerRef.current.x;
+                edgePositions[index++] = start.y - centerRef.current.y;
+                edgePositions[index++] = start.z - centerRef.current.z;
+                
+                edgePositions[index++] = end.x - centerRef.current.x;
+                edgePositions[index++] = end.y - centerRef.current.y;
+                edgePositions[index++] = end.z - centerRef.current.z;
+            });
+
+            const edgeGeometry = new THREE.BufferGeometry();
+            edgeGeometry.setAttribute('position', new THREE.BufferAttribute(edgePositions, 3));
+            
+            const edgeMaterial = new THREE.LineBasicMaterial({
+                color: 0xffd93d,
+                linewidth: 2
+            });
+            
+            const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
+            skeletonGroup.add(edges);
+        }
+
+        scene.add(skeletonGroup);
+        skeletonRef.current = skeletonGroup;
+
+        console.log('Viewport3D: Skeleton created', {
+            nodes: skeleton.nodes.length,
+            edges: skeleton.edges.length
+        });
+    }, [skeleton]);
 
     return (
         <div className="w-full h-full relative">
