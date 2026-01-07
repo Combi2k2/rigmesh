@@ -1,15 +1,7 @@
 'use client';
 
 import { useRef, useEffect } from 'react';
-import { Point } from './canvas';
-
-interface TriangulationData {
-    vertices: Point[];
-    faces: number[][];
-}
-
-// Bezier curve: array of control points [x, y]
-type Bezier = number[][];
+import { TriangulationData, Bezier } from '../interface';
 
 interface ViewportProps {
     triangulation: TriangulationData | null;

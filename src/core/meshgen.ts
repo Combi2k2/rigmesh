@@ -1,24 +1,17 @@
-import * as geo2d from './geo2d';
-import * as geo3d from './geo3d';
-import Queue from './queue';
+import * as geo2d from '../utils/geo2d';
+import * as geo3d from '../utils/geo3d';
+import Queue from '../utils/queue';
 import Vector from '@/lib/linalg/vector';
+import { Point, Vec2 } from '../interface/point';
+import { MeshData } from '../interface/mesh';
+import { SkeletonData } from '../interface/skeleton';
+import { SkinWeightInfo } from '../interface/skeleton';
 
 const { Mesh } = require('@/lib/geometry/mesh');
 
 // @ts-ignore - CommonJS module
 var Graph = require("graphlib").Graph;
 var cdt2d = require('cdt2d');
-
-interface Point {
-    x: number;
-    y: number;
-}
-
-function distance(a: Point, b: Point) {
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    return Math.sqrt(dx * dx + dy * dy);
-}
 
 function isClockwise(points: Point[]) {
     let sum = 0;
@@ -33,7 +26,7 @@ function reparameterize(points: Point[], isodistance: number) {
     let length = 0;
     for (let i = 0; i < points.length; i++) {
         const j = (i + 1) % points.length;
-        length += distance(points[i], points[j]);
+        length += points[i].minus(points[j]).norm();
     }
     let nSegments = Math.floor(length / isodistance);
     let newPath = [];
@@ -45,7 +38,7 @@ function reparameterize(points: Point[], isodistance: number) {
 
     for (let i = 0; i < nSegments; i++) {
         while (currentDistance < isodistance && currentPtr < points.length - 1) {
-            currentDistance += distance(points[currentPtr], points[currentPtr + 1]);
+            currentDistance += points[currentPtr].minus(points[currentPtr + 1]).norm();
             currentPtr++;
         }
         currentDistance -= isodistance;
@@ -53,12 +46,12 @@ function reparameterize(points: Point[], isodistance: number) {
         let index = Math.max(1, Math.min(points.length - 1, currentPtr));
         let a = points[index - 1];
         let b = points[index];
-        let t = Math.max(0, currentDistance) / distance(a, b);
+        let t = Math.max(0, currentDistance) / a.minus(b).norm();
         
-        newPath.push({
-            x: t * a.x + (1-t) * b.x,
-            y: t * a.y + (1-t) * b.y
-        });
+        newPath.push(new Vec2(
+            t * a.x + (1-t) * b.x,
+            t * a.y + (1-t) * b.y
+        ));
     }
     return newPath;
 }
@@ -76,6 +69,12 @@ class MeshGen {
 
     private allVertices: Vector[] = [];
     private allFaces: number[][] = [];
+
+    private Joints: Vector[] = [];
+    private Bones: [number, number][] = [];
+
+    private skinIndices: number[][] = [];
+    private skinWeights: number[][] = [];
 
     private mesh2d: any;
     private mesh3d: any;
@@ -125,6 +124,10 @@ class MeshGen {
         geo3d.runLeastSquaresMesh(this.allVertices, this.allFaces, constraints);
         geo3d.runFaceOrientation(this.allVertices, this.allFaces);
         geo3d.runIsometricRemesh(this.allVertices, this.allFaces, 6);
+
+
+        this.generateSkeleton(50, 50);
+        this.generateSkinWeight();
     }
     private buildTriangulation() {
         if (isClockwise(this.polygon)) {
@@ -176,7 +179,7 @@ class MeshGen {
                 if (visited[ic]) {
                     toLeaf[i] = Math.max(
                         toLeaf[i],
-                        toLeaf[ic] + distance(barycenter[i], barycenter[ic])
+                        toLeaf[ic] + barycenter[i].minus(barycenter[ic]).norm()
                     );
                 }
             }
@@ -248,7 +251,7 @@ class MeshGen {
             let v1 = this.polygon[h.vertex.index];
             let v2 = this.polygon[h.twin.vertex.index];
 
-            this.chordLengths.push(distance(v1, v2));
+            this.chordLengths.push(v1.minus(v2).norm());
             this.chordAxis.push(new Vector(
                 (v1.x + v2.x) / 2,
                 (v1.y + v2.y) / 2
@@ -802,8 +805,50 @@ class MeshGen {
                     Q.push([u, e.w]);
             }
         }
-        
-        return g;
+        let idxMap = new Map();
+
+        for (let u of g.nodes()) {
+            idxMap.set(u, this.Joints.length);
+            this.Joints.push(g.node(u));
+        }
+        for (let e of g.edges()) if (e.v < e.w) {
+            this.Bones.push([
+                idxMap.get(e.v),
+                idxMap.get(e.w)
+            ]);
+        }
+    }
+    generateSkinWeight() {
+        let nV = this.allVertices.length;
+        for (let i = 0; i < nV; i++) {
+            this.skinIndices.push([]);
+            this.skinWeights.push([]);
+        }
+        function weightKernel(d: number) {
+            return Math.pow(d, -2);
+        }
+        for (let i = 0; i < this.Bones.length; i++) {
+            let [b0, b1] = this.Bones[i];
+            let p0 = this.Joints[b0];
+            let p1 = this.Joints[b1];
+            let segment = p1.minus(p0);
+
+            for (let j = 0; j < nV; j++) {
+                let t = Math.max(0, Math.min(this.allVertices[j].minus(p0).dot(segment)/segment.norm2(), 1));
+                let P = p0.plus(segment.times(t));
+                let d = P.minus(this.allVertices[j]).norm2();
+
+                this.skinIndices[j].push(i);
+                this.skinWeights[j].push(d);
+            }
+        }
+        for (let i = 0; i < nV; i++) {
+            this.skinIndices[i].sort((a, b) => this.skinWeights[i][a] - this.skinWeights[i][b]);
+            this.skinIndices[i].splice(4);
+
+            let tmp = this.skinIndices[i].map(j => weightKernel(this.skinWeights[i][j]));
+            this.skinWeights[i] = tmp;
+        }
     }
 
     getChordAxis() {
@@ -848,7 +893,26 @@ class MeshGen {
     getFaces3D(): number[][] {
         return this.allFaces;
     }
+
+    // Get skeleton joints
+    getJoints(): Vector[] {
+        return this.Joints;
+    }
+
+    // Get skeleton bones (parent to child pairs)
+    getBones(): [number, number][] {
+        return this.Bones;
+    }
+
+    // Get skin indices for each vertex
+    getSkinIndices(): number[][] {
+        return this.skinIndices;
+    }
+
+    // Get skin weights for each vertex
+    getSkinWeights(): number[][] {
+        return this.skinWeights;
+    }
 }
 
 export { MeshGen };
-export type { Point };

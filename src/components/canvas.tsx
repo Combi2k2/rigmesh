@@ -6,11 +6,7 @@ import {
     useState,
     useCallback
 } from 'react';
-
-export interface Point {
-    x: number;
-    y: number;
-}
+import { Point, Vec2 } from '../interface/point';
 
 interface CanvasProps {
     onPathComplete?: (path: Point[]) => void;
@@ -26,15 +22,15 @@ export default function Canvas({ onPathComplete }: CanvasProps) {
 
     const CLOSE_THRESHOLD = 10;
 
-    const getMousePos = useCallback((e: React.MouseEvent<HTMLCanvasElement> | MouseEvent) => {
+    const getMousePos = useCallback((e: React.MouseEvent<HTMLCanvasElement> | MouseEvent): Vec2 => {
         const canvas = canvasRef.current;
-        if (!canvas) return { x: 0, y: 0 };
+        if (!canvas) return new Vec2(0, 0);
         
         const rect = canvas.getBoundingClientRect();
-        return {
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top,
-        };
+        return new Vec2(
+            e.clientX - rect.left,
+            e.clientY - rect.top
+        );
     }, []);
 
     const isCloseToStart = useCallback((point: Point, start: Point) => {

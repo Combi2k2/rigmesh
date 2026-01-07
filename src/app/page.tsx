@@ -1,23 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import Canvas, { Point } from './canvas';
-import Viewport from './viewport';
-import Viewport3D from './viewport3d';
-import { MeshGen } from './meshgen';
-
-// Bezier curve: array of control points [x, y]
-type Bezier = number[][];
-
-interface Mesh3DData {
-  vertices: { x: number; y: number; z: number }[];
-  faces: number[][];
-}
-
-interface SkeletonData {
-  nodes: { x: number; y: number; z: number }[];
-  edges: [number, number][];
-}
+import Canvas from '../components/canvas';
+import Viewport from '../components/viewport';
+import Viewport3D from '../components/viewport3d';
+import { MeshGen } from '../core/meshgen';
+import { Point, Mesh3DData, SkeletonData, SkinWeightData } from '../interface';
 
 export default function RigMeshPage() {
   const [exportedPaths, setExportedPaths] = useState<Point[][]>([]);
@@ -27,6 +15,7 @@ export default function RigMeshPage() {
   } | null>(null);
   const [mesh3D, setMesh3D] = useState<Mesh3DData | null>(null);
   const [skeleton, setSkeleton] = useState<SkeletonData | null>(null);
+  const [skinWeights, setSkinWeights] = useState<SkinWeightData | null>(null);
   const [latestPath, setLatestPath] = useState<Point[] | null>(null);
   const [isodistance, setIsodistance] = useState<number>(10);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('3d');
@@ -67,58 +56,33 @@ export default function RigMeshPage() {
           faces: mesh3DData.faces.length
         });
 
-        // Generate skeleton
-        try {
-          const skeletonGraph = meshGen.generateSkeleton(50, 50);
-          const skeletonNodes: { x: number; y: number; z: number }[] = [];
-          const skeletonEdges: [number, number][] = [];
-          
-          // Extract nodes from graph
-          const nodeMap = new Map<number, number>();
-          let nodeIndex = 0;
-          
-          skeletonGraph.nodes().forEach((nodeId) => {
-            const nodeData = skeletonGraph.node(nodeId);
-            // Handle both Vector and array formats (graphlib may store as array)
-            let pos: any = nodeData;
-            if (Array.isArray(nodeData) && nodeData.length > 0) {
-              pos = nodeData[0];
-            }
-            
-            // Extract x, y, z from Vector object
-            skeletonNodes.push({
-              x: pos?.x ?? 0,
-              y: pos?.y ?? 0,
-              z: pos?.z ?? 0
-            });
-            nodeMap.set(nodeId, nodeIndex);
-            nodeIndex++;
+        // Get skeleton data (already generated in constructor)
+        const joints = meshGen.getJoints();
+        const bones = meshGen.getBones();
+        const skinIndices = meshGen.getSkinIndices();
+        const skinWeightsData = meshGen.getSkinWeights();
+
+        if (joints.length > 0 && bones.length > 0) {
+          // Use new structure: joints and bones
+          setSkeleton({
+            joints: joints,
+            bones: bones
           });
-          
-          // Extract edges from graph
-          skeletonGraph.edges().forEach((edge) => {
-            const startIdx = nodeMap.get(edge.v);
-            const endIdx = nodeMap.get(edge.w);
-            if (startIdx !== undefined && endIdx !== undefined) {
-              skeletonEdges.push([startIdx, endIdx]);
-            }
+
+          // Set skin weights (convert to legacy format for compatibility)
+          setSkinWeights({
+            indices: skinIndices,
+            weights: skinWeightsData
           });
-          
-          if (skeletonNodes.length > 0) {
-            setSkeleton({
-              nodes: skeletonNodes,
-              edges: skeletonEdges
-            });
-            console.log('Skeleton generated:', {
-              nodes: skeletonNodes.length,
-              edges: skeletonEdges.length
-            });
-          } else {
-            setSkeleton(null);
-          }
-        } catch (error) {
-          console.error('Error generating skeleton:', error);
+
+          console.log('Skeleton and skin weights loaded:', {
+            joints: joints.length,
+            bones: bones.length,
+            verticesWithWeights: skinIndices.length
+          });
+        } else {
           setSkeleton(null);
+          setSkinWeights(null);
         }
       } else {
         console.warn('Empty 3D mesh generated');
@@ -192,7 +156,7 @@ export default function RigMeshPage() {
           {viewMode === '2d' ? (
             <Viewport triangulation={currentTriangulation} />
           ) : (
-            <Viewport3D mesh={mesh3D} mesh2d={currentTriangulation} skeleton={skeleton} />
+            <Viewport3D mesh={mesh3D} mesh2d={currentTriangulation} skeleton={skeleton} skinWeights={skinWeights} />
           )}
         </div>
         <div className="bg-gray-100 dark:bg-gray-800 border-t border-gray-300 dark:border-gray-700 p-3 space-y-3">
