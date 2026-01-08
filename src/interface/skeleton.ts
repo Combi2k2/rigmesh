@@ -26,3 +26,4 @@ export interface SkinWeightData {
     indices: number[][];
     weights: number[][];
 }
+

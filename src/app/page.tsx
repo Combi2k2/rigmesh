@@ -19,6 +19,7 @@ export default function RigMeshPage() {
   const [latestPath, setLatestPath] = useState<Point[] | null>(null);
   const [isodistance, setIsodistance] = useState<number>(10);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('3d');
+  const [showSkeleton, setShowSkeleton] = useState<boolean>(false);
 
   const processMesh = useCallback((path: Point[], iso: number) => {
     try {
@@ -156,7 +157,7 @@ export default function RigMeshPage() {
           {viewMode === '2d' ? (
             <Viewport triangulation={currentTriangulation} />
           ) : (
-            <Viewport3D mesh={mesh3D} mesh2d={currentTriangulation} skeleton={skeleton} skinWeights={skinWeights} />
+            <Viewport3D mesh={mesh3D} mesh2d={currentTriangulation} skeleton={skeleton} skinWeights={skinWeights} showSkeleton={showSkeleton} />
           )}
         </div>
         <div className="bg-gray-100 dark:bg-gray-800 border-t border-gray-300 dark:border-gray-700 p-3 space-y-3">
@@ -200,6 +201,20 @@ export default function RigMeshPage() {
                 className="w-full"
               />
             </div>
+            {viewMode === '3d' && skeleton && skeleton.joints && skeleton.joints.length > 0 && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="showSkeleton"
+                  checked={showSkeleton}
+                  onChange={(e) => setShowSkeleton(e.target.checked)}
+                  className="w-4 h-4"
+                />
+                <label htmlFor="showSkeleton" className="text-xs text-gray-600 dark:text-gray-400 cursor-pointer">
+                  Show Skeleton
+                </label>
+              </div>
+            )}
           </div>
           
           {/* Stats */}

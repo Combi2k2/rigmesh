@@ -6,6 +6,7 @@ import { Point, Vec2 } from '../interface/point';
 import { MeshData } from '../interface/mesh';
 import { SkeletonData } from '../interface/skeleton';
 import { SkinWeightInfo } from '../interface/skeleton';
+import { createTemporaryReferenceSet } from 'next/dist/server/app-render/entry-base';
 
 const { Mesh } = require('@/lib/geometry/mesh');
 
@@ -125,8 +126,7 @@ class MeshGen {
         geo3d.runFaceOrientation(this.allVertices, this.allFaces);
         geo3d.runIsometricRemesh(this.allVertices, this.allFaces, 6);
 
-
-        this.generateSkeleton(50, 50);
+        this.generateSkeleton(20, 60);
         this.generateSkinWeight();
     }
     private buildTriangulation() {
@@ -722,6 +722,20 @@ class MeshGen {
         for (let e of this.chordGraph.edges())
             g.setEdge(e.v, e.w);
 
+        function deviation(segment: Point[]) {
+            let axis = segment[segment.length-1].minus(segment[0]).unit();
+            let dev = 0;
+            for (let x of segment) {
+                let v = x.minus(segment[0]);
+                let p = axis.times(v.dot(axis));
+                let d = v.minus(p).norm();
+
+                if (dev < d)
+                    dev = d;
+            }
+            return dev;
+        }
+
         while (Q.size() > 0) {
             let i = Q.pop();
             let p = g.node(i);
@@ -762,13 +776,14 @@ class MeshGen {
             v1 = v1.minus(side1.times(v1.dot(side1)));
             v2 = v2.minus(side2.times(v2.dot(side2)));
 
-            let error = v0.norm() + 0.5 * (v1.norm() + v2.norm());
+            let error = 0.5 * deviation([p0, p, p1]) + 0.25 * (v1.norm() + v2.norm());
             if (error < boneDeviationThreshold) {
                 g.setEdge(n0, n1);
                 g.setEdge(n1, n0);
                 g.removeNode(i);
             }
         }
+        let boundary = vertIdx;
         for (let [c0, c1, c2] of this.chordJunctions) {
             let p0 = g.node(c0);
             let p1 = g.node(c1);
@@ -778,28 +793,49 @@ class MeshGen {
             g.setEdge(c0, vertIdx); g.setEdge(vertIdx, c0);
             g.setEdge(c1, vertIdx); g.setEdge(vertIdx, c1);
             g.setEdge(c2, vertIdx); g.setEdge(vertIdx, c2);
+
+            Q.push([String(vertIdx), String(c0)]);
+            Q.push([String(vertIdx), String(c1)]);
+            Q.push([String(vertIdx), String(c2)]);
             vertIdx++;
         }
-        for (let e of g.edges())
-            Q.push([e.v, e.w]);
 
         while (Q.size() > 0) {
             let [u, v] = Q.pop();
             if (!g.hasEdge(u, v))
                 continue;
 
+            let segment = [u, v];
+
+            while (parseInt(v) < boundary && g.outEdges(v).length === 2) {
+                let x = g.outEdges(v)[0].w;
+                if (x === segment[segment.length-2])
+                    x = g.outEdges(v)[1].w;
+
+                segment.push(v = x);
+            }
+
             let p0 = g.node(u);
             let p1 = g.node(v);
             let dist = p1.minus(p0).norm();
             if (dist < boneLengthThreshold) {
                 for (let e of g.outEdges(v))
-                    if (e.w !== u) {
+                    if (e.w !== segment[segment.length-2]) {
                         g.setEdge(u, e.w);
                         g.setEdge(e.w, u);
                     }
                 
-                g.removeNode(v);
-                g.setNode(u, p0.plus(p1).times(0.5));
+                let w0 = parseInt(u) >= boundary ? 1 : 0;
+                let w1 = parseInt(v) >= boundary ? 1 : 0;
+                let w = w0 + w1;
+                w0 /= w;
+                w1 /= w;
+
+                for (let x of segment)
+                    if (x !== u)
+                        g.removeNode(x);
+                
+                g.setNode(u, p0.times(w0).plus(p1.times(w1)));
 
                 for (let e of g.outEdges(u))
                     Q.push([u, e.w]);
@@ -847,7 +883,8 @@ class MeshGen {
             this.skinIndices[i].splice(4);
 
             let tmp = this.skinIndices[i].map(j => weightKernel(this.skinWeights[i][j]));
-            this.skinWeights[i] = tmp;
+            let sum = tmp.reduce((a, b) => a + b, 0);
+            this.skinWeights[i] = tmp.map(w => w / sum);
         }
     }
 

@@ -10,9 +10,10 @@ interface Viewport3DProps {
     mesh2d?: Mesh2DData | null;
     skeleton?: SkeletonData | null;
     skinWeights?: SkinWeightData | null;
+    showSkeleton?: boolean;
 }
 
-export default function Viewport3D({ mesh, mesh2d, skeleton, skinWeights }: Viewport3DProps) {
+export default function Viewport3D({ mesh, mesh2d, skeleton, skinWeights, showSkeleton = false }: Viewport3DProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const sceneRef = useRef<THREE.Scene | null>(null);
     const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -29,6 +30,13 @@ export default function Viewport3D({ mesh, mesh2d, skeleton, skinWeights }: View
     const centerRef = useRef<THREE.Vector3>(new THREE.Vector3());
     const keysPressed = useRef<Set<string>>(new Set());
     const selectedBoneRef = useRef<number | null>(null);
+    const jointSpheresRef = useRef<THREE.Mesh[]>([]);
+    const raycasterRef = useRef<THREE.Raycaster | null>(null);
+    const selectedJointRef = useRef<number | null>(null);
+    const isDraggingRef = useRef<boolean>(false);
+    const dragStartRef = useRef<THREE.Vector3 | null>(null);
+    const originalJointPositionsRef = useRef<THREE.Vector3[]>([]);
+    const originalMeshPositionsRef = useRef<Float32Array | null>(null);
 
     // Initialize Three.js scene
     useEffect(() => {
@@ -44,7 +52,7 @@ export default function Viewport3D({ mesh, mesh2d, skeleton, skinWeights }: View
             75,
             containerRef.current.clientWidth / containerRef.current.clientHeight,
             0.1,
-            1000
+            100000  // Much larger far plane
         );
         camera.position.set(0, 0, 300);
         cameraRef.current = camera;
@@ -61,6 +69,10 @@ export default function Viewport3D({ mesh, mesh2d, skeleton, skinWeights }: View
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
         controlsRef.current = controls;
+
+        // Raycaster for joint selection
+        const raycaster = new THREE.Raycaster();
+        raycasterRef.current = raycaster;
 
         // Lighting
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
@@ -273,6 +285,10 @@ export default function Viewport3D({ mesh, mesh2d, skeleton, skinWeights }: View
         bonesRef.current = [];
         meshRef.current = null;
         wireframeRef.current = null;
+        
+        // Reset original positions when mesh changes
+        originalJointPositionsRef.current = [];
+        originalMeshPositionsRef.current = null;
 
         if (!mesh || mesh.vertices.length === 0 || mesh.faces.length === 0) {
             console.log('Viewport3D: Empty 3D mesh data');
@@ -456,6 +472,7 @@ export default function Viewport3D({ mesh, mesh2d, skeleton, skinWeights }: View
         // Remove old skeleton
         cleanupSkeleton(skeletonRef.current, scene);
         skeletonRef.current = null;
+        jointSpheresRef.current = [];
 
         if (!skeleton || skeleton.joints.length === 0) {
             return;
@@ -464,19 +481,28 @@ export default function Viewport3D({ mesh, mesh2d, skeleton, skinWeights }: View
         // Create skeleton group
         const skeletonGroup = new THREE.Group();
 
-        // Create joints (spheres)
-        const jointGeometry = new THREE.SphereGeometry(2, 8, 8);
-        const jointMaterial = new THREE.MeshBasicMaterial({ color: 0xff6b6b });
+        // Create joints (spheres) - make them larger and more visible
+        const jointGeometry = new THREE.SphereGeometry(5, 16, 16);
+        const jointMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xff6b6b,
+            depthTest: false, // Render on top
+            depthWrite: false
+        });
         
-        skeleton.joints.forEach((joint) => {
-            const sphere = new THREE.Mesh(jointGeometry, jointMaterial);
+        const jointSpheres: THREE.Mesh[] = [];
+        skeleton.joints.forEach((joint, index) => {
+            const sphere = new THREE.Mesh(jointGeometry, jointMaterial.clone());
             sphere.position.set(
                 joint.x - centerRef.current.x,
                 joint.y - centerRef.current.y,
                 joint.z - centerRef.current.z
             );
+            sphere.userData.jointIndex = index;
+            sphere.renderOrder = 1000; // Render on top
             skeletonGroup.add(sphere);
+            jointSpheres.push(sphere);
         });
+        jointSpheresRef.current = jointSpheres;
 
         // Create bones (lines)
         if (skeleton.bones.length > 0) {
@@ -501,21 +527,340 @@ export default function Viewport3D({ mesh, mesh2d, skeleton, skinWeights }: View
             
             const boneMaterial = new THREE.LineBasicMaterial({
                 color: 0xffd93d,
-                linewidth: 2
+                linewidth: 3,
+                depthTest: false, // Render on top
+                depthWrite: false
             });
             
             const bones = new THREE.LineSegments(boneGeometry, boneMaterial);
+            bones.renderOrder = 999; // Render on top
             skeletonGroup.add(bones);
         }
 
+        // Set visibility based on showSkeleton prop
+        skeletonGroup.visible = showSkeleton;
         scene.add(skeletonGroup);
         skeletonRef.current = skeletonGroup;
 
         console.log('Viewport3D: Skeleton created', {
             joints: skeleton.joints.length,
-            bones: skeleton.bones.length
+            bones: skeleton.bones.length,
+            visible: showSkeleton
         });
-    }, [skeleton]);
+    }, [skeleton, showSkeleton]);
+
+    // Reset original positions when skeleton visibility changes
+    useEffect(() => {
+        if (showSkeleton && skeleton && skinnedMeshRef.current) {
+            // Store original joint positions
+            originalJointPositionsRef.current = [];
+            skeleton.joints.forEach((joint) => {
+                originalJointPositionsRef.current.push(new THREE.Vector3(
+                    joint.x - centerRef.current.x,
+                    joint.y - centerRef.current.y,
+                    joint.z - centerRef.current.z
+                ));
+            });
+
+            // Store original mesh positions
+            if (skinnedMeshRef.current) {
+                const geometry = skinnedMeshRef.current.geometry;
+                const positionAttribute = geometry.getAttribute('position') as THREE.BufferAttribute;
+                originalMeshPositionsRef.current = new Float32Array(positionAttribute.array);
+            }
+        } else {
+            // Reset when skeleton is hidden
+            originalJointPositionsRef.current = [];
+            originalMeshPositionsRef.current = null;
+        }
+    }, [showSkeleton, skeleton]);
+
+    // Joint selection and dragging
+    useEffect(() => {
+        if (!containerRef.current || !rendererRef.current || !cameraRef.current || !sceneRef.current) return;
+        if (!showSkeleton || !skeleton || !skinWeights || !skinnedMeshRef.current) return;
+
+        const container = containerRef.current;
+        const renderer = rendererRef.current;
+        const camera = cameraRef.current;
+        const scene = sceneRef.current;
+        const raycaster = raycasterRef.current;
+        if (!raycaster) return;
+
+        const updateMeshVertices = (jointIndex: number, newPosition: THREE.Vector3) => {
+            if (!skeleton || !skinWeights || !skinnedMeshRef.current || !originalMeshPositionsRef.current) {
+                console.log('updateMeshVertices: Missing dependencies', {
+                    hasSkeleton: !!skeleton,
+                    hasSkinWeights: !!skinWeights,
+                    hasSkinnedMesh: !!skinnedMeshRef.current,
+                    hasOriginalPositions: !!originalMeshPositionsRef.current
+                });
+                return;
+            }
+            if (originalJointPositionsRef.current.length === 0) {
+                console.log('updateMeshVertices: No original joint positions');
+                return;
+            }
+
+            const skinnedMesh = skinnedMeshRef.current;
+            const geometry = skinnedMesh.geometry;
+            const positionAttribute = geometry.getAttribute('position') as THREE.BufferAttribute;
+            const positions = positionAttribute.array as Float32Array;
+            const originalPositions = originalMeshPositionsRef.current;
+
+            // Get original joint position
+            const originalJointPos = originalJointPositionsRef.current[jointIndex];
+            if (!originalJointPos) {
+                console.log('updateMeshVertices: No original position for joint', jointIndex);
+                return;
+            }
+
+            // Calculate displacement
+            const displacement = newPosition.clone().sub(originalJointPos);
+            console.log('updateMeshVertices: Joint', jointIndex, 'displacement:', displacement);
+
+            // Find all bones connected to this joint
+            const connectedBoneIndices: number[] = [];
+            skeleton.bones.forEach(([startIdx, endIdx], boneIdx) => {
+                if (startIdx === jointIndex || endIdx === jointIndex) {
+                    connectedBoneIndices.push(boneIdx);
+                }
+            });
+
+            console.log('updateMeshVertices: Connected bones:', connectedBoneIndices);
+
+            if (connectedBoneIndices.length === 0) {
+                console.log('updateMeshVertices: No connected bones for joint', jointIndex);
+                return;
+            }
+
+            // Reset to original positions first
+            for (let i = 0; i < positions.length; i++) {
+                positions[i] = originalPositions[i];
+            }
+
+            let verticesUpdated = 0;
+            // Update vertices based on skin weights for bones connected to this joint
+            for (let i = 0; i < positions.length / 3; i++) {
+                const vertexBoneIndices = skinWeights.indices[i] || [];
+                const vertexBoneWeights = skinWeights.weights[i] || [];
+
+                // Calculate total weight for this vertex from all connected bones
+                let totalWeight = 0;
+                let totalWeightedDisplacement = new THREE.Vector3(0, 0, 0);
+
+                for (let k = 0; k < vertexBoneIndices.length; k++) {
+                    const boneIdx = vertexBoneIndices[k];
+                    if (connectedBoneIndices.includes(boneIdx)) {
+                        const weight = vertexBoneWeights[k];
+                        totalWeight += weight;
+                        totalWeightedDisplacement.add(displacement.clone().multiplyScalar(weight));
+                    }
+                }
+
+                // Apply the weighted displacement
+                if (totalWeight > 0) {
+                    positions[i * 3] += totalWeightedDisplacement.x;
+                    positions[i * 3 + 1] += totalWeightedDisplacement.y;
+                    positions[i * 3 + 2] += totalWeightedDisplacement.z;
+                    verticesUpdated++;
+                }
+            }
+
+            console.log('updateMeshVertices: Updated', verticesUpdated, 'vertices');
+
+            positionAttribute.needsUpdate = true;
+            // Force update of the buffer
+            positionAttribute.updateRange = { offset: 0, count: positions.length };
+            geometry.computeVertexNormals();
+            geometry.computeBoundingBox();
+            
+            // Force renderer to update
+            if (rendererRef.current) {
+                rendererRef.current.render(sceneRef.current!, cameraRef.current!);
+            }
+        };
+
+        const getMousePosition = (event: MouseEvent) => {
+            const rect = container.getBoundingClientRect();
+            return {
+                x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
+                y: -((event.clientY - rect.top) / rect.height) * 2 + 1
+            };
+        };
+
+        const intersectJoint = (mouse: { x: number; y: number }): number | null => {
+            raycaster.setFromCamera(new THREE.Vector2(mouse.x, mouse.y), camera);
+            const intersects = raycaster.intersectObjects(jointSpheresRef.current, false);
+            
+            if (intersects.length > 0) {
+                const intersected = intersects[0].object as THREE.Mesh;
+                return intersected.userData.jointIndex as number;
+            }
+            return null;
+        };
+
+        const projectToPlane = (point: THREE.Vector3, planeNormal: THREE.Vector3, planePoint: THREE.Vector3): THREE.Vector3 => {
+            const d = point.clone().sub(planePoint);
+            const distance = d.dot(planeNormal);
+            return point.clone().sub(planeNormal.clone().multiplyScalar(distance));
+        };
+
+        const handleMouseDown = (event: MouseEvent) => {
+            if (!showSkeleton || !controlsRef.current || !skeleton || !skinnedMeshRef.current) return;
+            
+            const mouse = getMousePosition(event);
+            const jointIndex = intersectJoint(mouse);
+            
+            if (jointIndex !== null) {
+                selectedJointRef.current = jointIndex;
+                isDraggingRef.current = true;
+                
+                // Store initial joint position
+                dragStartRef.current = originalJointPositionsRef.current[jointIndex].clone();
+                
+                // Disable automatic skinning so we can manually control vertex positions
+                if (skinnedMeshRef.current.material instanceof THREE.Material) {
+                    (skinnedMeshRef.current.material as any).skinning = false;
+                }
+                
+                // Disable orbit controls while dragging
+                controlsRef.current.enabled = false;
+                
+                // Highlight selected joint
+                if (jointSpheresRef.current[jointIndex]) {
+                    (jointSpheresRef.current[jointIndex].material as THREE.MeshBasicMaterial).color.setHex(0x00ff00);
+                }
+                
+                event.preventDefault();
+            }
+        };
+
+        const handleMouseMove = (event: MouseEvent) => {
+            if (!isDraggingRef.current || selectedJointRef.current === null || !camera || !skeleton) return;
+
+            const mouse = getMousePosition(event);
+            raycaster.setFromCamera(new THREE.Vector2(mouse.x, mouse.y), camera);
+
+            // Get camera direction (normal to the plane)
+            const cameraDirection = new THREE.Vector3();
+            camera.getWorldDirection(cameraDirection);
+
+            // Create a plane orthogonal to camera direction at the joint's original depth
+            const planePoint = dragStartRef.current!.clone();
+            
+            // Project mouse ray onto the plane
+            const ray = raycaster.ray;
+            const t = planePoint.clone().sub(ray.origin).dot(cameraDirection) / ray.direction.dot(cameraDirection);
+            const newPosition = ray.origin.clone().add(ray.direction.clone().multiplyScalar(t));
+
+            // Update joint position
+            const jointIndex = selectedJointRef.current;
+            const jointSphere = jointSpheresRef.current[jointIndex];
+            if (jointSphere) {
+                jointSphere.position.copy(newPosition);
+                
+                // Update bone positions
+                if (skeletonRef.current) {
+                    const boneLines = skeletonRef.current.children.find(
+                        child => child instanceof THREE.LineSegments
+                    ) as THREE.LineSegments | undefined;
+                    
+                    if (boneLines) {
+                        const positions = (boneLines.geometry.getAttribute('position') as THREE.BufferAttribute).array as Float32Array;
+                        
+                        skeleton.bones.forEach(([startIdx, endIdx], boneIdx) => {
+                            const startPos = startIdx === jointIndex ? 
+                                newPosition :
+                                (originalJointPositionsRef.current[startIdx] || new THREE.Vector3(
+                                    skeleton.joints[startIdx].x - centerRef.current.x,
+                                    skeleton.joints[startIdx].y - centerRef.current.y,
+                                    skeleton.joints[startIdx].z - centerRef.current.z
+                                ));
+                            
+                            const endPos = endIdx === jointIndex ?
+                                newPosition :
+                                (originalJointPositionsRef.current[endIdx] || new THREE.Vector3(
+                                    skeleton.joints[endIdx].x - centerRef.current.x,
+                                    skeleton.joints[endIdx].y - centerRef.current.y,
+                                    skeleton.joints[endIdx].z - centerRef.current.z
+                                ));
+                            
+                            const idx = boneIdx * 6;
+                            positions[idx] = startPos.x;
+                            positions[idx + 1] = startPos.y;
+                            positions[idx + 2] = startPos.z;
+                            positions[idx + 3] = endPos.x;
+                            positions[idx + 4] = endPos.y;
+                            positions[idx + 5] = endPos.z;
+                        });
+                        
+                        boneLines.geometry.getAttribute('position').needsUpdate = true;
+                    }
+                }
+                
+                // Update mesh vertices
+                updateMeshVertices(jointIndex, newPosition);
+            }
+        };
+
+        const handleMouseUp = () => {
+            if (isDraggingRef.current && selectedJointRef.current !== null) {
+                // Update original joint position for future edits
+                const jointSphere = jointSpheresRef.current[selectedJointRef.current];
+                if (jointSphere && originalJointPositionsRef.current[selectedJointRef.current]) {
+                    originalJointPositionsRef.current[selectedJointRef.current].copy(jointSphere.position);
+                }
+
+                // Update skeleton data with new joint position
+                if (skeleton && selectedJointRef.current !== null) {
+                    const jointSphere = jointSpheresRef.current[selectedJointRef.current];
+                    if (jointSphere) {
+                        const newPos = jointSphere.position.clone().add(centerRef.current);
+                        // Update the joint in skeleton (assuming it's mutable or we need to update parent state)
+                        const joint = skeleton.joints[selectedJointRef.current];
+                        if (joint && typeof joint === 'object' && 'x' in joint) {
+                            joint.x = newPos.x;
+                            joint.y = newPos.y;
+                            joint.z = newPos.z;
+                        }
+                    }
+                }
+
+                // Update original mesh positions to current state
+                if (skinnedMeshRef.current && originalMeshPositionsRef.current) {
+                    const geometry = skinnedMeshRef.current.geometry;
+                    const positionAttribute = geometry.getAttribute('position') as THREE.BufferAttribute;
+                    originalMeshPositionsRef.current.set(positionAttribute.array as Float32Array);
+                }
+                
+                // Reset joint color
+                if (selectedJointRef.current !== null && jointSpheresRef.current[selectedJointRef.current]) {
+                    (jointSpheresRef.current[selectedJointRef.current].material as THREE.MeshBasicMaterial).color.setHex(0xff6b6b);
+                }
+            }
+            
+            isDraggingRef.current = false;
+            selectedJointRef.current = null;
+            dragStartRef.current = null;
+            
+            if (controlsRef.current) {
+                controlsRef.current.enabled = true;
+            }
+        };
+
+        container.addEventListener('mousedown', handleMouseDown);
+        container.addEventListener('mousemove', handleMouseMove);
+        container.addEventListener('mouseup', handleMouseUp);
+        container.addEventListener('mouseleave', handleMouseUp);
+
+        return () => {
+            container.removeEventListener('mousedown', handleMouseDown);
+            container.removeEventListener('mousemove', handleMouseMove);
+            container.removeEventListener('mouseup', handleMouseUp);
+            container.removeEventListener('mouseleave', handleMouseUp);
+        };
+    }, [showSkeleton, skeleton, skinWeights]);
 
     // Rig controls - bone manipulation
     useEffect(() => {

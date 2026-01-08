@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useEffect } from 'react';
-import { TriangulationData, Bezier } from '../interface';
+import { TriangulationData, Bezier, Point } from '../interface';
 
 interface ViewportProps {
     triangulation: TriangulationData | null;
