@@ -170,64 +170,21 @@ export function runIsometricRemesh(vertices, faces, iterations = 6) {
         let g = new Graph();
 
         for (let i = 0; i < vertices.length; i++)
-            g.setNode(i, {pos: new Vector(
-                vertices[i].x,
-                vertices[i].y,
-                vertices[i].z
-            )});
+            g.setNode(i, vertices[i]);
         
-        function addFace(a, b, c) {
-            if (!g.hasNode(a) || !g.hasNode(b) || !g.hasNode(c)) {
-                console.log("Trying to add face with non-existent vertices", a, b, c);
-                return;
-            }
-            if (!g.hasEdge(a, b))   g.setEdge(a, b, {corners: new Set()});
-            if (!g.hasEdge(b, c))   g.setEdge(b, c, {corners: new Set()});
-            if (!g.hasEdge(c, a))   g.setEdge(c, a, {corners: new Set()});
-
-            g.edge(a, b).corners.add(String(c));
-            g.edge(b, c).corners.add(String(a));
-            g.edge(c, a).corners.add(String(b));
-        }
-        function delFace(a, b, c) {
-            if (!g.hasEdge(a, b) || !g.edge(a, b).corners.has(String(c)) ||
-                !g.hasEdge(b, c) || !g.edge(b, c).corners.has(String(a)) ||
-                !g.hasEdge(c, a) || !g.edge(c, a).corners.has(String(b))) {
-                console.error(`Face ${a}-${b}-${c} is destroyed inproperly`);
-                return;
-            }
-            g.edge(a, b).corners.delete(String(c));
-            g.edge(b, c).corners.delete(String(a));
-            g.edge(c, a).corners.delete(String(b));
-        }
-        function removeNode(u) {
-            if (!g.hasNode(u)) {
-                console.error(`Node ${u} was removed before`);
-                return;
-            }
-            for (let e of g.outEdges(u))
-            for (let c of g.edge(u, e.w).corners) {
-                delFace(u, e.w, c);
-                if (g.edge(e.w, c).corners.size === 0)
-                    g.removeEdge(e.w, c);
-            }
-            g.removeNode(u);
-        }
-        function removeEdge(u, v) {
-            if (g.hasEdge(u, v)) {
-                for (let c of g.edge(u, v).corners)
-                    delFace(u, v, c);
-                g.removeEdge(u, v);
-            }
+        function setFace(a, b, c) {
+            g.setEdge(a, b, String(c));
+            g.setEdge(b, c, String(a));
+            g.setEdge(c, a, String(b));
         }
         for (let f of faces)
-            addFace(f[0], f[1], f[2]);
+            setFace(f[0], f[1], f[2]);
     
         let L = 0;
         let Q = new Queue();
 
         for (let e of g.edges()) {
-            L += g.node(e.v).pos.minus(g.node(e.w).pos).norm();
+            L += g.node(e.v).minus(g.node(e.w)).norm();
             Q.push([e.v, e.w]);
         }
         
@@ -242,28 +199,27 @@ export function runIsometricRemesh(vertices, faces, iterations = 6) {
             if (!g.hasEdge(u, v))
                 continue;
             
-            let p0 = g.node(u).pos;
-            let p1 = g.node(v).pos;
+            let p0 = g.node(u);
+            let p1 = g.node(v);
             let d = p0.minus(p1).norm();
             if (d > upperBound) {
                 let x = String(vertIdx++);
-                g.setNode(x, {pos: p0.plus(p1).times(0.5)});
-                let upperCorners = g.edge(u, v).corners;
-                let lowerCorners = g.edge(v, u).corners;
-                for (let c of upperCorners) {
-                    addFace(u, x, c);
-                    addFace(x, v, c);
-                    Q.push([x, c]);
-                }
-                for (let c of lowerCorners) {
-                    addFace(u, c, x);
-                    addFace(x, c, v);
-                    Q.push([x, c]);
-                }
+                let y = g.edge(u, v);
+                let z = g.edge(v, u);
+
+                setFace(u, x, y);
+                setFace(x, v, y);
+                setFace(u, z, x);
+                setFace(x, z, v);
+
+                g.setNode(x, p0.plus(p1).times(0.5));
+                g.removeEdge(u, v);
+                g.removeEdge(v, u);
+
                 Q.push([x, u]);
                 Q.push([x, v]);
-                removeEdge(u, v);
-                removeEdge(v, u);
+                Q.push([x, y]);
+                Q.push([x, z]);
             }
         }
         for (let e of g.edges()) if (e.v < e.w)
@@ -273,18 +229,33 @@ export function runIsometricRemesh(vertices, faces, iterations = 6) {
             let [u, v] = Q.pop();
             if (!g.hasNode(u))  continue;
             if (!g.hasNode(v))  continue;
+            if (!g.hasEdge(u, v))   continue;
 
-            let p0 = g.node(u).pos;
-            let p1 = g.node(v).pos;
+            let p0 = g.node(u);
+            let p1 = g.node(v);
             let d = p0.minus(p1).norm();
 
             if (d < lowerBound) {
-                for (let e of g.outEdges(v)) if (e.w != u)
-                for (let c of g.edge(v, e.w).corners) if (c != u)
-                    addFace(u, e.w, c);
+                let commonNeighborCount = 0;
+                let canCollapse = true;
 
-                removeNode(v);
-                g.setNode(u, {pos: p0.plus(p1).times(0.5)});
+                for (let e of g.outEdges(u))
+                    if (g.hasEdge(v, e.w))
+                        commonNeighborCount++;
+                
+                if (commonNeighborCount > 2)
+                    continue;
+                
+                for (let e of g.outEdges(v)) {
+                    let x = e.w;
+                    let y = g.edge(x, v);
+                    if (x === u)    continue;
+                    if (y === u)    continue;
+
+                    setFace(x, u, y);
+                }
+                g.removeNode(v);
+                g.setNode(u, p0.plus(p1).times(0.5));
 
                 for (let e of g.outEdges(u))
                     Q.push([u, e.w]);
@@ -303,16 +274,11 @@ export function runIsometricRemesh(vertices, faces, iterations = 6) {
 
         while (!Q.empty()) {
             let [u, v] = Q.pop();
+            if (!g.hasEdge(u, v))
+                continue;
 
-            let upperCorners = g.hasEdge(u, v) ? g.edge(u, v).corners : new Set();
-            let lowerCorners = g.hasEdge(v, u) ? g.edge(v, u).corners : new Set();
-
-            if (upperCorners.size !== 1)    continue;
-            if (lowerCorners.size !== 1)    continue;
-
-            let x = upperCorners.values().next().value;
-            let y = lowerCorners.values().next().value;
-
+            let x = g.edge(u, v);
+            let y = g.edge(v, u);
             let dev = (
                 (deg.get(u) > 6 ? 1 : -1) +
                 (deg.get(v) > 6 ? 1 : -1) +
@@ -322,26 +288,22 @@ export function runIsometricRemesh(vertices, faces, iterations = 6) {
             if (dev <= 0)
                 continue;
 
-            removeEdge(u, v);
-            removeEdge(v, u);
+            g.removeEdge(u, v);
+            g.removeEdge(v, u);
 
             deg.set(u, deg.get(u) - 1);
             deg.set(v, deg.get(v) - 1);
+            deg.set(x, deg.get(x) + 1);
+            deg.set(y, deg.get(y) + 1);
 
-            if (x === y)
-                continue;
-
-            addFace(u, y, x);
-            addFace(v, x, y);
+            setFace(u, y, x);
+            setFace(v, x, y);
 
             let nodes = [u, v, x, y];
             for (let n of nodes)
             for (let e of g.outEdges(n))
                 if (!nodes.includes(e.w))
                     Q.push([n, e.w]);
-            
-            deg.set(x, deg.get(x) + 1);
-            deg.set(y, deg.get(y) + 1);
             
             Q.push([x, y]);
             Q.push([u, y]);
@@ -357,14 +319,13 @@ export function runIsometricRemesh(vertices, faces, iterations = 6) {
             idxMap.set(u, vertices.length);
             let outDeg = 0;
 
-            let p = g.node(u).pos;
+            let p = g.node(u);
             let C = new Vector(0, 0, 0);
             let N = new Vector(0, 0, 0);
 
-            for (let e of g.outEdges(u))
-            for (let c of g.edge(u, e.w).corners) {
-                let a = g.node(c).pos;
-                let b = g.node(e.w).pos;
+            for (let e of g.outEdges(u)) {
+                let a = g.node(e.w);
+                let b = g.node(g.edge(u, e.w));
 
                 N.incrementBy(a.minus(p).cross(b.minus(p)));
                 C.incrementBy(a);
@@ -380,13 +341,15 @@ export function runIsometricRemesh(vertices, faces, iterations = 6) {
             vertices.push(p);
         }
         for (let u of g.nodes())
-        for (let e of g.outEdges(u))
-        for (let c of g.edge(u, e.w).corners)
-            if (u < e.w && u < c)
+        for (let e of g.outEdges(u)) {
+            let v = e.w;
+            let w = g.edge(u, v);
+            if (u < v && u < w)
                 faces.push([
                     idxMap.get(u),
-                    idxMap.get(e.w),
-                    idxMap.get(c)
+                    idxMap.get(v),
+                    idxMap.get(w)
                 ]);
+        }
     }
 }
