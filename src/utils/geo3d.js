@@ -120,7 +120,7 @@ export function runFaceOrientation(vertices, faces) {
         }
     }
 }
-export function runLeastSquaresMesh(vertices, faces, constraints) {
+export function runLeastSquaresMesh(vertices, faces, constraints, factor = 1) {
     let n = vertices.length;
     let m = constraints.length;
     let T = new Triplet(n+m, n);
@@ -132,15 +132,15 @@ export function runLeastSquaresMesh(vertices, faces, constraints) {
         deg[v] += 2;
 
     for (let i = 0; i < n; i++)
-        T.addEntry(1, i, i);
+        T.addEntry(factor, i, i);
 
     for (let f of faces)
     for (let i = 0; i < f.length; i++) {
         let u = f[i];
         let v = f[(i+1)%f.length];
 
-        T.addEntry(-1/deg[u], u, v);
-        T.addEntry(-1/deg[v], v, u);
+        T.addEntry(-factor/deg[u], u, v);
+        T.addEntry(-factor/deg[v], v, u);
     }
     for (let i = 0; i < m; i++)
         T.addEntry(1, n+i, constraints[i]);
@@ -165,7 +165,7 @@ export function runLeastSquaresMesh(vertices, faces, constraints) {
         vertices[i].z = u.get(i, 2);
     }
 }
-export function runIsometricRemesh(vertices, faces, iterations = 6) {
+export function runIsometricRemesh(vertices, faces, iterations = 6, length = -1) {
     for (let t = 0; t < iterations; t++) {
         let g = new Graph();
 
@@ -184,7 +184,7 @@ export function runIsometricRemesh(vertices, faces, iterations = 6) {
         let Q = new Queue();
 
         for (let e of g.edges()) {
-            L += g.node(e.v).minus(g.node(e.w)).norm();
+            L += length < 0 ? g.node(e.v).minus(g.node(e.w)).norm() : length;
             Q.push([e.v, e.w]);
         }
         

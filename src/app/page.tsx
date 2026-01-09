@@ -1,239 +1,204 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Canvas from '../components/canvas';
-import Viewport from '../components/viewport';
 import Viewport3D from '../components/viewport3d';
+import MeshGenFlow from '../components/meshgenUI/MeshGenFlow';
 import { MeshGen } from '../core/meshgen';
-import { Point, Mesh3DData, SkeletonData, SkinWeightData } from '../interface';
+import { Point } from '../interface';
+import Vector from '@/lib/linalg/vector';
+import * as geo3d from '../utils/geo3d';
 
 export default function RigMeshPage() {
-  const [exportedPaths, setExportedPaths] = useState<Point[][]>([]);
-  const [currentTriangulation, setCurrentTriangulation] = useState<{
-    vertices: Point[];
-    faces: number[][];
-  } | null>(null);
-  const [mesh3D, setMesh3D] = useState<Mesh3DData | null>(null);
-  const [skeleton, setSkeleton] = useState<SkeletonData | null>(null);
-  const [skinWeights, setSkinWeights] = useState<SkinWeightData | null>(null);
-  const [latestPath, setLatestPath] = useState<Point[] | null>(null);
-  const [isodistance, setIsodistance] = useState<number>(10);
-  const [viewMode, setViewMode] = useState<'2d' | '3d'>('3d');
-  const [showSkeleton, setShowSkeleton] = useState<boolean>(false);
-
-  const processMesh = useCallback((path: Point[], iso: number) => {
-    try {
-      console.log('Processing mesh with isodistance:', iso);
-      
-      // Create MeshGen instance - mesh is generated in constructor
-      const meshGen = new MeshGen(path, iso);
-      
-      // Get 2D triangulation for preview
-      const points = meshGen.getPoints();
-      const faces = meshGen.getFaces();
-      
-      setCurrentTriangulation({
-        vertices: points,
-        faces: faces
-      });
-      
-      // Get generated 3D mesh from getters
-      const vertices3D = meshGen.getVertices3D();
-      const faces3D = meshGen.getFaces3D();
-      
-      if (vertices3D.length > 0 && faces3D.length > 0) {
-        // Convert Vector to plain objects
-        const mesh3DData: Mesh3DData = {
-          vertices: vertices3D.map(v => ({
-            x: v.x,
-            y: v.y,
-            z: v.z
-          })),
-          faces: faces3D
-        };
-        setMesh3D(mesh3DData);
-        console.log('3D Mesh generated:', {
-          vertices: mesh3DData.vertices.length,
-          faces: mesh3DData.faces.length
-        });
-
-        // Get skeleton data (already generated in constructor)
-        const joints = meshGen.getJoints();
-        const bones = meshGen.getBones();
-        const skinIndices = meshGen.getSkinIndices();
-        const skinWeightsData = meshGen.getSkinWeights();
-
-        if (joints.length > 0 && bones.length > 0) {
-          // Use new structure: joints and bones
-          setSkeleton({
-            joints: joints,
-            bones: bones
-          });
-
-          // Set skin weights (convert to legacy format for compatibility)
-          setSkinWeights({
-            indices: skinIndices,
-            weights: skinWeightsData
-          });
-
-          console.log('Skeleton and skin weights loaded:', {
-            joints: joints.length,
-            bones: bones.length,
-            verticesWithWeights: skinIndices.length
-          });
-        } else {
-          setSkeleton(null);
-          setSkinWeights(null);
-        }
-      } else {
-        console.warn('Empty 3D mesh generated');
-        setMesh3D(null);
-        setSkeleton(null);
-      }
-    } catch (error) {
-      console.error('Error processing mesh:', error);
-    }
-  }, []);
-
-  const handlePathComplete = (path: Point[]) => {
-    console.log('Path received in handlePathComplete:', path);
-    console.log('Path length:', path.length);
+    const [latestPath, setLatestPath] = useState<Point[] | null>(null);
+    const [currentStep, setCurrentStep] = useState<number>(1);
     
-    setExportedPaths((prev) => {
-      const newPaths = [...prev, path];
-      console.log('Total paths exported:', newPaths.length);
-      return newPaths;
-    });
+    // Step 1: Generate + Prune Triangulation
+    const [isodistance, setIsodistance] = useState<number>(10);
+    const [branchMinLength, setBranchMinLength] = useState<number>(5);
+    const [polygon, setPolygon] = useState<Point[] | null>(null);
+    const [mesh2D, setMesh2D] = useState<[Point[], number[][]] | null>(null);
+    const [mesh3D, setMesh3D] = useState<[Vector[], number[][]] | null>(null);
+    
+    // Step 2: Chord Smoothing
+    const [laplacianIterations, setLaplacianIterations] = useState<number>(50);
+    const [laplacianAlpha, setLaplacianAlpha] = useState<number>(0.5);
+    const [chordData, setChordData] = useState<[Vector[], Vector[], number[]] | null>(null);
+    
+    // Step 3: Surface Generation
+    const [init3, setInit3] = useState<boolean>(false);
+    const [smoothFactor, setSmoothFactor] = useState<number>(0.1);
+    const [capOffset, setCapOffset] = useState<number>(0);
+    const [junctionOffset, setJunctionOffset] = useState<number>(0);
+    
+    // Step 4: Isometric Remeshing
+    const [init4, setInit4] = useState<boolean>(false);
+    const [isometricIterations, setIsometricIterations] = useState<number>(6);
+    const [isometricLength, setIsometricLength] = useState<number>(0);
+    const [isometricLengthAuto, setIsometricLengthAuto] = useState<boolean>(true);
+    const [V_clone, setV_clone] = useState<Vector[]>([]);
+    const [F_clone, setF_clone] = useState<number[][]>([]);
+  
+    const meshGenRef = useRef<MeshGen | null>(null);
 
-    setLatestPath(path);
-    processMesh(path, isodistance);
-  };
+    // Step 1: Generate + Prune Triangulation
+    const processStep1 = useCallback((path: Point[]) => {
+        const meshGen = new MeshGen(path, isodistance, branchMinLength);
+        meshGenRef.current = meshGen;
+        const mesh2DData = meshGen.getMesh2D() as [Point[], number[][]];
+        setMesh2D(mesh2DData);
+        setPolygon(mesh2DData[0]);
+    }, [isodistance, branchMinLength]);
 
-  // Reprocess when parameters change
-  useEffect(() => {
-    if (latestPath) {
-      processMesh(latestPath, isodistance);
-    }
-  }, [isodistance, latestPath, processMesh]);
+    // Step 2: Chord Smoothing
+    const processStep2 = useCallback(() => {
+        if (!meshGenRef.current) return;
 
-  const exportAllPaths = () => {
-    const dataStr = JSON.stringify(exportedPaths, null, 2);
-    const dataBlob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(dataBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `paths-${Date.now()}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
+        const meshGen = meshGenRef.current;
+        meshGen.runChordSmoothing(laplacianIterations, laplacianAlpha);
+        const chords = meshGen.getChords() as [Vector[], Vector[], number[]];
+        setChordData(chords);
+    }, [laplacianIterations, laplacianAlpha]);
 
-  return (
-    <div className="w-full h-screen overflow-hidden flex">
-      {/* Left sidebar - Canvas */}
-      <div className="w-1/2 border-r border-gray-300 dark:border-gray-700 flex flex-col">
-        <div className="flex-1 relative">
-          <Canvas onPathComplete={handlePathComplete} />
-        </div>
-        {exportedPaths.length > 0 && (
-          <div className="bg-gray-100 dark:bg-gray-800 border-t border-gray-300 dark:border-gray-700 p-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-600 dark:text-gray-400">
-                {exportedPaths.length} path{exportedPaths.length !== 1 ? 's' : ''} exported
-              </span>
-              <button
-                onClick={exportAllPaths}
-                className="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded"
-              >
-                Export All as JSON
-              </button>
+    const preprocessStep3 = useCallback(() => {
+        if (!meshGenRef.current) return;
+
+        const meshGen = meshGenRef.current;
+        meshGen.generatePipes();    setCapOffset(meshGen.faceCount());
+        meshGen.stitchCaps();       setJunctionOffset(meshGen.faceCount());
+        meshGen.stitchJunctions();
+
+        const mesh3DData = meshGen.getMesh3D() as [Vector[], number[][]];
+        setInit3(true);
+        setMesh3D(mesh3DData);
+        // Deep copy: create new Vector objects to avoid reference issues
+        setV_clone(mesh3DData[0].map(v => new Vector(v.x, v.y, v.z)));
+        setF_clone(mesh3DData[1].map(f => [...f]));
+    }, []);
+    
+    const processStep3 = useCallback(() => {
+        // Deep copy: create new Vector objects to avoid modifying V_clone
+        const V = V_clone.map(v => new Vector(v.x, v.y, v.z));
+        const F = F_clone.map(f => [...f]);
+        if (!meshGenRef.current) return;
+        meshGenRef.current.runMeshSmoothing(V, F, smoothFactor);
+        setMesh3D([V, F]);
+    }, [smoothFactor, V_clone, F_clone]);
+
+    // Step 4: Isometric Remeshing
+    const preprocessStep4 = useCallback(() => {
+        if (!mesh3D) return;
+        // Deep copy: create new Vector objects to avoid reference issues
+        setV_clone(mesh3D[0].map(v => new Vector(v.x, v.y, v.z)));
+        setF_clone(mesh3D[1].map(f => [...f]));
+        setInit4(true);
+    }, [mesh3D]);
+    
+    const processStep4 = useCallback(() => {
+        let V = [...V_clone];
+        let F = [...F_clone];
+        
+        const length = isometricLengthAuto ? -1 : isometricLength;
+        geo3d.runIsometricRemesh(V, F, isometricIterations, length);
+        
+        setMesh3D([V, F]);
+    }, [isometricIterations, isometricLength, isometricLengthAuto, V_clone, F_clone]);
+
+    // Handle path completion - start Step 1
+    const handlePathComplete = useCallback((path: Point[]) => {
+        setLatestPath(path);
+        setCurrentStep(1);
+        processStep1(path);
+    }, [processStep1]);
+
+    // Handle step changes - preprocessing only
+    useEffect(() => {
+        if (!latestPath) return;
+        
+        if (currentStep === 1) {
+            processStep1(latestPath);
+        } else if (currentStep === 2) {
+            processStep2();
+        } else if (currentStep === 3 && !init3) {
+            preprocessStep3();
+        } else if (currentStep === 4 && !init4) {
+            preprocessStep4();
+        }
+    }, [currentStep,
+        processStep1, latestPath, isodistance, branchMinLength,
+        processStep2, laplacianIterations, laplacianAlpha,
+        preprocessStep3, init3,
+        preprocessStep4, init4
+    ]);
+
+    // Handle parameter updates for step 3 (smoothFactor changes)
+    useEffect(() => {
+        if (currentStep === 3 && init3) {
+            processStep3();
+        }
+        if (currentStep === 4 && init4) {
+            processStep4();
+        }
+    }, [currentStep, V_clone, F_clone,
+        processStep3, init3, smoothFactor,
+        processStep4, init4, isometricIterations, isometricLength, isometricLengthAuto
+    ]);
+    const handleNext = () => {
+        if (currentStep < 4) {
+            setCurrentStep(currentStep + 1);
+        }
+    };
+
+    return (
+        <div className="w-full h-screen overflow-hidden flex border border-gray-300 dark:border-gray-700">
+        {/* Left: 3D Edit Space (2/3 width) */}
+        <div className="w-2/3 border-r border-gray-300 dark:border-gray-700 relative">
+            <div className="absolute inset-0">
+            <Viewport3D 
+                mesh2d={currentStep === 1 ? mesh2D : null}
+                mesh3d={currentStep === 3 || currentStep === 4 ? mesh3D : null}
+                chordData={currentStep === 2 ? chordData : null}
+                currentStep={currentStep}
+                vertices2d={polygon ? polygon.map(p => ({ x: p.x, y: p.y })) : null}
+                capOffset={capOffset}
+                junctionOffset={junctionOffset}
+            />
             </div>
-          </div>
-        )}
-      </div>
-
-      {/* Right sidebar - Viewport */}
-      <div className="w-1/2 flex flex-col">
-        <div className="flex-1 relative">
-          {viewMode === '2d' ? (
-            <Viewport triangulation={currentTriangulation} />
-          ) : (
-            <Viewport3D mesh={mesh3D} mesh2d={currentTriangulation} skeleton={skeleton} skinWeights={skinWeights} showSkeleton={showSkeleton} />
-          )}
         </div>
-        <div className="bg-gray-100 dark:bg-gray-800 border-t border-gray-300 dark:border-gray-700 p-3 space-y-3">
-          {/* View mode toggle */}
-          <div className="flex gap-2">
-            <button
-              onClick={() => setViewMode('2d')}
-              className={`px-3 py-1 text-sm rounded ${
-                viewMode === '2d'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
-              }`}
-            >
-              2D View
-            </button>
-            <button
-              onClick={() => setViewMode('3d')}
-              className={`px-3 py-1 text-sm rounded ${
-                viewMode === '3d'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
-              }`}
-            >
-              3D View
-            </button>
-          </div>
 
-          {/* Controls */}
-          <div className="space-y-2">
-            <div>
-              <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">
-                Isodistance: {isodistance}
-              </label>
-              <input
-                type="range"
-                min="2"
-                max="50"
-                step="1"
-                value={isodistance}
-                onChange={(e) => setIsodistance(Number(e.target.value))}
-                className="w-full"
-              />
-            </div>
-            {viewMode === '3d' && skeleton && skeleton.joints && skeleton.joints.length > 0 && (
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="showSkeleton"
-                  checked={showSkeleton}
-                  onChange={(e) => setShowSkeleton(e.target.checked)}
-                  className="w-4 h-4"
+        {/* Right: Control Panel (1/3 width) */}
+        <div className="w-1/3 flex flex-col bg-gray-50 dark:bg-gray-900">
+            {/* Canvas Section */}
+            <div className="border-b border-gray-300 dark:border-gray-700 p-2">
+                <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">Canvas</div>
+                    <div className="h-64 border border-gray-300 dark:border-gray-700 rounded">
+                        <Canvas onPathComplete={handlePathComplete} />
+                    </div>
+                </div>
+
+                {/* MeshGen Flow Component */}
+                <MeshGenFlow
+                    currentStep={currentStep}
+                    totalSteps={4}
+                    isodistance={isodistance}
+                    branchMinLength={branchMinLength}
+                    onIsodistanceChange={setIsodistance}
+                    onBranchMinLengthChange={setBranchMinLength}
+                    laplacianIterations={laplacianIterations}
+                    laplacianAlpha={laplacianAlpha}
+                    onLaplacianIterationsChange={setLaplacianIterations}
+                    onLaplacianAlphaChange={setLaplacianAlpha}
+                    smoothFactor={smoothFactor}
+                    onSmoothFactorChange={setSmoothFactor}
+                    isometricIterations={isometricIterations}
+                    isometricLength={isometricLength}
+                    isometricLengthAuto={isometricLengthAuto}
+                    onIsometricIterationsChange={setIsometricIterations}
+                    onIsometricLengthChange={setIsometricLength}
+                    onIsometricLengthAutoChange={setIsometricLengthAuto}
+                    onNext={handleNext}
                 />
-                <label htmlFor="showSkeleton" className="text-xs text-gray-600 dark:text-gray-400 cursor-pointer">
-                  Show Skeleton
-                </label>
-              </div>
-            )}
-          </div>
-          
-          {/* Stats */}
-          <div className="text-sm text-gray-600 dark:text-gray-400 border-t border-gray-300 dark:border-gray-700 pt-2">
-            {currentTriangulation && (
-              <>
-                <div>2D Vertices: {currentTriangulation.vertices.length}</div>
-                <div>2D Triangles: {currentTriangulation.faces.length}</div>
-              </>
-            )}
-            {mesh3D && (
-              <>
-                <div>3D Vertices: {mesh3D.vertices.length}</div>
-                <div>3D Triangles: {mesh3D.faces.length}</div>
-              </>
-            )}
-          </div>
+            </div>
         </div>
-      </div>
-    </div>
-  );
+    );
 }

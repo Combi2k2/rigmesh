@@ -71,77 +71,25 @@ class MeshGen {
     private allVertices: Vector[] = [];
     private allFaces: number[][] = [];
 
-    private Joints: Vector[] = [];
-    private Bones: [number, number][] = [];
+    private triangulation: any;
 
-    private skinIndices: number[][] = [];
-    private skinWeights: number[][] = [];
-
-    private mesh2d: any;
-    private mesh3d: any;
-
-    constructor(private polygon: Point[], private isodistance: number) {
+    constructor(private polygon: Point[], private isodistance: number, private branchMinLength: number = 5) {
         this.buildTriangulation();
         this.pruneTriangulation();
-        this.buildChordGraph();
-
-        let nC = this.chordGraph.nodeCount();
-        for (let i = 0; i < nC; i++) {
-            let dir = this.chordDirs[i];
-            this.chordDirs[i] = new Vector(
-                dir.x * dir.x - dir.y * dir.y,
-                2 * dir.x * dir.y
-            );
-            this.chordDirs[i].normalize();
-        }
-        for (let i = 0; i < 50; i++) {
-            geo3d.runLaplacianSmooth(this.chordDirs, [], this.chordGraph, 0.5);
-            geo3d.runLaplacianSmooth(this.chordAxis, [], this.chordGraph, 0.5);
-            
-            for (let j = 0; j < nC; j++)
-                this.chordDirs[j].normalize();
-        }
-        for (let i = 0; i < nC; i++) {
-            let dir = this.chordDirs[i];
-            let nx = Math.sqrt((1 + dir.x) / 2);
-            let ny = Math.sqrt((1 - dir.x) / 2);
-            if (nx * ny * dir.y < 0) {
-                ny = -ny;
-            }
-            this.chordDirs[i].x = nx;
-            this.chordDirs[i].y = ny;
-        }
-        
-        this.generateCylinders();
-        this.stitchCaps();
-        this.stitchJunctions();
-
-        // NOTE: runLSMesh is disabled due to ES module compatibility issues with Emscripten
-        let constraints = [];
-        for (let i = 0; i < nC; i++)
-        for (let j = 0; j < this.chordBufSize[i]; j++)
-            constraints.push(this.chordOffset[i] + j);
-        
-        geo3d.runLeastSquaresMesh(this.allVertices, this.allFaces, constraints);
-        geo3d.runFaceOrientation(this.allVertices, this.allFaces);
-        geo3d.runIsometricRemesh(this.allVertices, this.allFaces, 6);
-
-        this.generateSkeleton(20, 60);
-        this.generateSkinWeight();
     }
     private buildTriangulation() {
         if (isClockwise(this.polygon)) {
             this.polygon = this.polygon.reverse();
         }
         this.polygon = reparameterize(this.polygon, this.isodistance);
-        this.mesh2d = new (Mesh as any)();
-        this.mesh2d.build({
+        this.triangulation = new (Mesh as any)();
+        this.triangulation.build({
             v: this.polygon.map(p => new Vector(p.x, p.y, 0)),
             f: geo2d.CDT(this.polygon).flat()
         });
     }
     private pruneTriangulation() {
-        let nF = this.mesh2d.faces.length;
+        let nF = this.triangulation.faces.length;
         let toLeaf = new Array(nF).fill(0);
         let toPrune = new Array(nF).fill(false);
         let visited = new Array(nF).fill(false);
@@ -149,7 +97,7 @@ class MeshGen {
         let barycenter = new Array(nF).fill({x: 0, y: 0});
 
         for (let i = 0; i < nF; i++) {
-            let f = this.mesh2d.faces[i];
+            let f = this.triangulation.faces[i];
 
             for (let h of f.adjacentHalfedges()) {
                 barycenter[i].x += this.polygon[h.vertex.index].x;
@@ -166,7 +114,7 @@ class MeshGen {
         
         while (!queue.empty()) {
             let i = queue.pop();
-            let f = this.mesh2d.faces[i];
+            let f = this.triangulation.faces[i];
             let adjFaces = [];
             visited[i] = true;
 
@@ -189,13 +137,13 @@ class MeshGen {
                 for (let fc of adjFaces) {
                     let ic = fc.index;
                     if (visited[ic]) {
-                        if (toLeaf[ic] < 5 * this.isodistance) {
+                        if (toLeaf[ic] < this.branchMinLength) {
                             toPrune[ic] = true;
                             let st = [[ic, i]];
                             while (st.length > 0) {
                                 let [u, p] = st.pop() as [number, number];
 
-                                for (let h of this.mesh2d.faces[u].adjacentHalfedges()) {
+                                for (let h of this.triangulation.faces[u].adjacentHalfedges()) {
                                     let v = h.twin.face.index;
                                     if (v !== p && !toPrune[v]) {
                                         toPrune[v] = true;
@@ -220,10 +168,10 @@ class MeshGen {
         let newFaces = [];
         for (let i = 0; i < nF; i++)
             if (!toPrune[i]) {
-                for (let v of this.mesh2d.faces[i].adjacentVertices())
+                for (let v of this.triangulation.faces[i].adjacentVertices())
                     newFaces.push(v.index);
             }
-        this.mesh2d.build({
+        this.triangulation.build({
             v: this.polygon.map(p => new Vector(p.x, p.y, 0)),
             f: newFaces
         });
@@ -231,8 +179,15 @@ class MeshGen {
     private buildChordGraph() {
         let chordCount = 0;
         this.chordGraph = new Graph();
+        this.chordDirs = [];
+        this.chordAxis = [];
+        this.chordLengths = [];
+        this.chordCaps = [];
+        this.chordJunctions = [];
+        this.chordOffset = [];
+        this.chordBufSize = [];
         
-        for (let e of this.mesh2d.edges) {
+        for (let e of this.triangulation.edges) {
             if (e.onBoundary())
                 continue;
             
@@ -241,31 +196,24 @@ class MeshGen {
             let i0 = h.vertex.index;
             let i1 = h.twin.vertex.index;
 
-            if (i0 > i1) {
-                [i0, i1] = [i1, i0];
-            }
-
-            let key = `${i0}-${i1}`;
+            let key = `${Math.min(i0, i1)}-${Math.max(i0, i1)}`;
             this.chordMap.set(key, chordCount);
 
-            let v1 = this.polygon[h.vertex.index];
-            let v2 = this.polygon[h.twin.vertex.index];
+            let v1 = this.polygon[i0];
+            let v2 = this.polygon[i1];
 
             this.chordLengths.push(v1.minus(v2).norm());
             this.chordAxis.push(new Vector(
                 (v1.x + v2.x) / 2,
                 (v1.y + v2.y) / 2
             ));
-            let dir = new Vector(
+            this.chordDirs.push((new Vector(
                 v2.x - v1.x,
                 v2.y - v1.y
-            );
-            dir.normalize();
-
-            this.chordDirs.push(dir);
+            )).unit());
             chordCount++;
         }
-        for (let f of this.mesh2d.faces) {
+        for (let f of this.triangulation.faces) {
             let chordIndices = [];
             let chordCorner = null;
 
@@ -387,7 +335,7 @@ class MeshGen {
         }
         return faces;
     }
-    private generateCylinders() {
+    generatePipes() {
         let nC = this.chordGraph.nodeCount();
         let visited = new Array(nC).fill(false);
 
@@ -456,7 +404,6 @@ class MeshGen {
             }
         }
     }
-    
     stitchCaps() {
         for (let [i, o] of this.chordCaps) {
             let d = this.chordDirs[i];
@@ -709,246 +656,67 @@ class MeshGen {
             }
         }
     }
-
-    generateSkeleton(boneDeviationThreshold: number, boneLengthThreshold: number) {
-        let g = new Graph();
-        let Q = new Queue();
-        let vertIdx = this.chordAxis.length;
-
-        for (let i = 0; i < this.chordAxis.length; i++) {
-            g.setNode(i, this.chordAxis[i]);
-            Q.push(i);
+    runChordSmoothing(iterations: number = 50, alpha: number = 0.5) {
+        this.buildChordGraph();
+        let nC = this.chordGraph.nodeCount();
+        for (let i = 0; i < nC; i++) {
+            let dir = this.chordDirs[i];
+            this.chordDirs[i] = new Vector(
+                dir.x * dir.x - dir.y * dir.y,
+                2 * dir.x * dir.y
+            );
+            this.chordDirs[i].normalize();
         }
-        for (let e of this.chordGraph.edges())
-            g.setEdge(e.v, e.w);
-
-        function deviation(segment: Point[]) {
-            let axis = segment[segment.length-1].minus(segment[0]).unit();
-            let dev = 0;
-            for (let x of segment) {
-                let v = x.minus(segment[0]);
-                let p = axis.times(v.dot(axis));
-                let d = v.minus(p).norm();
-
-                if (dev < d)
-                    dev = d;
+        for (let _ = 0; _ < iterations; _++) {
+            geo3d.runLaplacianSmooth(this.chordDirs, [], this.chordGraph, alpha);
+            geo3d.runLaplacianSmooth(this.chordAxis, [], this.chordGraph, alpha);
+            
+            for (let j = 0; j < nC; j++)
+                this.chordDirs[j].normalize();
+        }
+        for (let i = 0; i < nC; i++) {
+            let dir = this.chordDirs[i];
+            let nx = Math.sqrt((1 + dir.x) / 2);
+            let ny = Math.sqrt((1 - dir.x) / 2);
+            if (nx * ny * dir.y < 0) {
+                ny = -ny;
             }
-            return dev;
-        }
-
-        while (Q.size() > 0) {
-            let i = Q.pop();
-            let p = g.node(i);
-
-            let neighbors = g.outEdges(i).map(e => e.w);
-            if (neighbors.length !== 2)
-                continue;
-
-            let n0 = parseInt(neighbors[0]);
-            let n1 = parseInt(neighbors[1]);
-
-            let p0 = g.node(n0);
-            let p1 = g.node(n1);
-
-            let axisDir = p1.minus(p0).unit();
-            let baseDir = axisDir.cross(new Vector(0, 0, 1)).unit();
-
-            let a1 = p0.plus(baseDir.times(this.chordLengths[n0]/2));
-            let b1 = p1.plus(baseDir.times(this.chordLengths[n1]/2));
-            let a2 = p0.minus(baseDir.times(this.chordLengths[n0]/2));
-            let b2 = p1.minus(baseDir.times(this.chordLengths[n1]/2));
-
-            let chordDir = this.chordDirs[i];
-            if (chordDir.dot(baseDir) < 0)
-                chordDir = chordDir.times(-1);
-
-            let c1 = p.plus(chordDir.times(this.chordLengths[i]/2));
-            let c2 = p.minus(chordDir.times(this.chordLengths[i]/2));
-
-            let side1 = a1.minus(b1).unit();
-            let side2 = a2.minus(b2).unit();
-
-            let v0 = p.minus(p0);
-            let v1 = c1.minus(b1);
-            let v2 = c2.minus(b2);
-
-            v0 = v0.minus(axisDir.times(v0.dot(axisDir)));
-            v1 = v1.minus(side1.times(v1.dot(side1)));
-            v2 = v2.minus(side2.times(v2.dot(side2)));
-
-            let error = 0.5 * deviation([p0, p, p1]) + 0.25 * (v1.norm() + v2.norm());
-            if (error < boneDeviationThreshold) {
-                g.setEdge(n0, n1);
-                g.setEdge(n1, n0);
-                g.removeNode(i);
-            }
-        }
-        let boundary = vertIdx;
-        for (let [c0, c1, c2] of this.chordJunctions) {
-            let p0 = g.node(c0);
-            let p1 = g.node(c1);
-            let p2 = g.node(c2);
-            let barycenter = p0.plus(p1).plus(p2).times(1/3);
-            g.setNode(vertIdx, barycenter);
-            g.setEdge(c0, vertIdx); g.setEdge(vertIdx, c0);
-            g.setEdge(c1, vertIdx); g.setEdge(vertIdx, c1);
-            g.setEdge(c2, vertIdx); g.setEdge(vertIdx, c2);
-
-            Q.push([String(vertIdx), String(c0)]);
-            Q.push([String(vertIdx), String(c1)]);
-            Q.push([String(vertIdx), String(c2)]);
-            vertIdx++;
-        }
-
-        while (Q.size() > 0) {
-            let [u, v] = Q.pop();
-            if (!g.hasEdge(u, v))
-                continue;
-
-            let segment = [u, v];
-
-            while (parseInt(v) < boundary && g.outEdges(v).length === 2) {
-                let x = g.outEdges(v)[0].w;
-                if (x === segment[segment.length-2])
-                    x = g.outEdges(v)[1].w;
-
-                segment.push(v = x);
-            }
-
-            let p0 = g.node(u);
-            let p1 = g.node(v);
-            let dist = p1.minus(p0).norm();
-            if (dist < boneLengthThreshold) {
-                for (let e of g.outEdges(v))
-                    if (e.w !== segment[segment.length-2]) {
-                        g.setEdge(u, e.w);
-                        g.setEdge(e.w, u);
-                    }
-                
-                let w0 = parseInt(u) >= boundary ? 1 : 0;
-                let w1 = parseInt(v) >= boundary ? 1 : 0;
-                let w = w0 + w1;
-                w0 /= w;
-                w1 /= w;
-
-                for (let x of segment)
-                    if (x !== u)
-                        g.removeNode(x);
-                
-                g.setNode(u, p0.times(w0).plus(p1.times(w1)));
-
-                for (let e of g.outEdges(u))
-                    Q.push([u, e.w]);
-            }
-        }
-        let idxMap = new Map();
-
-        for (let u of g.nodes()) {
-            idxMap.set(u, this.Joints.length);
-            this.Joints.push(g.node(u));
-        }
-        for (let e of g.edges()) if (e.v < e.w) {
-            this.Bones.push([
-                idxMap.get(e.v),
-                idxMap.get(e.w)
-            ]);
+            this.chordDirs[i].x = nx;
+            this.chordDirs[i].y = ny;
         }
     }
-    generateSkinWeight() {
-        let nV = this.allVertices.length;
-        for (let i = 0; i < nV; i++) {
-            this.skinIndices.push([]);
-            this.skinWeights.push([]);
-        }
-        function weightKernel(d: number) {
-            return Math.pow(d, -2);
-        }
-        for (let i = 0; i < this.Bones.length; i++) {
-            let [b0, b1] = this.Bones[i];
-            let p0 = this.Joints[b0];
-            let p1 = this.Joints[b1];
-            let segment = p1.minus(p0);
+    runMeshSmoothing(V: Vector[], F: number[][], factor: number = 0.1) {
+        let nC = this.chordGraph.nodeCount();
+        let constraints = [];
+        for (let i = 0; i < nC; i++)
+        for (let j = 0; j < this.chordBufSize[i]; j++)
+            constraints.push(this.chordOffset[i] + j);
 
-            for (let j = 0; j < nV; j++) {
-                let t = Math.max(0, Math.min(this.allVertices[j].minus(p0).dot(segment)/segment.norm2(), 1));
-                let P = p0.plus(segment.times(t));
-                let d = P.minus(this.allVertices[j]).norm2();
-
-                this.skinIndices[j].push(i);
-                this.skinWeights[j].push(d);
-            }
-        }
-        for (let i = 0; i < nV; i++) {
-            this.skinIndices[i].sort((a, b) => this.skinWeights[i][a] - this.skinWeights[i][b]);
-            this.skinIndices[i].splice(4);
-
-            let tmp = this.skinIndices[i].map(j => weightKernel(this.skinWeights[i][j]));
-            let sum = tmp.reduce((a, b) => a + b, 0);
-            this.skinWeights[i] = tmp.map(w => w / sum);
-        }
+        geo3d.runLeastSquaresMesh(V, F, constraints, factor);
+        geo3d.runFaceOrientation(V, F);
     }
-
-    getChordAxis() {
-        return this.chordAxis;
-    }
-
-    getChordDirs() {
-        return this.chordDirs;
-    }
-
-    getChordLengths() {
-        return this.chordLengths;
+    getChords() {
+        return [this.chordAxis.slice(), this.chordDirs.slice(), this.chordLengths.slice()];
     }
     getMesh2D() {
-        return this.mesh2d;
-    }
-    getMesh3D() {
-        return this.mesh3d;
-    }
-    getPoints(): Point[] {
-        return this.polygon;
-    }
-    getFaces(): number[][] {
-        // Extract faces from the halfedge mesh
         const faces: number[][] = [];
-        for (const f of this.mesh2d.faces) {
+        for (const f of this.triangulation.faces) {
             const face: number[] = [];
             for (const v of f.adjacentVertices()) {
                 face.push(v.index);
             }
             faces.push(face);
         }
-        return faces;
+        return [this.polygon.slice(), faces];
     }
-    
-    // Get generated 3D mesh vertices
-    getVertices3D(): Vector[] {
-        return this.allVertices;
+    getMesh3D() {
+        return [this.allVertices.slice(), this.allFaces.slice()];
     }
-    
-    // Get generated 3D mesh faces
-    getFaces3D(): number[][] {
-        return this.allFaces;
+    vertCount() {
+        return this.allVertices.length;
     }
-
-    // Get skeleton joints
-    getJoints(): Vector[] {
-        return this.Joints;
-    }
-
-    // Get skeleton bones (parent to child pairs)
-    getBones(): [number, number][] {
-        return this.Bones;
-    }
-
-    // Get skin indices for each vertex
-    getSkinIndices(): number[][] {
-        return this.skinIndices;
-    }
-
-    // Get skin weights for each vertex
-    getSkinWeights(): number[][] {
-        return this.skinWeights;
+    faceCount() {
+        return this.allFaces.length;
     }
 }
 

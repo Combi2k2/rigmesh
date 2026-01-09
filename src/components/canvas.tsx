@@ -1,83 +1,64 @@
 'use client';
 
-import {
-    useRef,
-    useEffect,
-    useState,
-    useCallback
-} from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import { Point, Vec2 } from '../interface/point';
 
 interface CanvasProps {
     onPathComplete?: (path: Point[]) => void;
 }
 
+const CLOSE_THRESHOLD = 10;
+
 export default function Canvas({ onPathComplete }: CanvasProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [isDrawing, setIsDrawing] = useState(false);
     const [startPoint, setStartPoint] = useState<Point | null>(null);
     const [currentPath, setCurrentPath] = useState<Point[]>([]);
-    const hasLeftStartNeighborhoodRef = useRef(false);
-    const exportedPathsRef = useRef<Point[][]>([]);
+    const hasLeftStartRef = useRef(false);
 
-    const CLOSE_THRESHOLD = 10;
-
+    // Get mouse position relative to canvas
     const getMousePos = useCallback((e: React.MouseEvent<HTMLCanvasElement> | MouseEvent): Vec2 => {
         const canvas = canvasRef.current;
         if (!canvas) return new Vec2(0, 0);
-        
         const rect = canvas.getBoundingClientRect();
-        return new Vec2(
-            e.clientX - rect.left,
-            e.clientY - rect.top
-        );
+        return new Vec2(e.clientX - rect.left, e.clientY - rect.top);
     }, []);
 
-    const isCloseToStart = useCallback((point: Point, start: Point) => {
+    // Check if point is close enough to start point to close the path
+    const isCloseToStart = useCallback((point: Point, start: Point): boolean => {
         const dx = point.x - start.x;
         const dy = point.y - start.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        return distance < CLOSE_THRESHOLD;
+        return Math.sqrt(dx * dx + dy * dy) < CLOSE_THRESHOLD;
     }, []);
 
-    const clearCanvas = useCallback(() => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        
+    // Get canvas context helper
+    const getContext = useCallback(() => {
+        return canvasRef.current?.getContext('2d');
+    }, []);
+
+    // Draw the current path on canvas
+    const drawPath = useCallback(() => {
+        const ctx = getContext();
+        if (!ctx || currentPath.length < 2) return;
+
+        const canvas = canvasRef.current!;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }, []);
 
-    const drawCurrentPath = useCallback(() => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        
-        clearCanvas();
-        
-        if (currentPath.length < 2) return;
-        
-        ctx.strokeStyle = '#3b82f6'; // blue-500
+        // Draw main path
+        ctx.strokeStyle = '#3b82f6';
         ctx.lineWidth = 2;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        
         ctx.beginPath();
         ctx.moveTo(currentPath[0].x, currentPath[0].y);
-        for (let i = 1; i < currentPath.length; i++)
-            ctx.lineTo(currentPath[i].x, currentPath[i].y);
-        
+        currentPath.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
         ctx.stroke();
 
-        // If close to start and has left the neighborhood, draw a preview line
-        if (startPoint && currentPath.length > 2 && hasLeftStartNeighborhoodRef.current) {
+        // Draw preview line to start if close
+        if (startPoint && currentPath.length > 2 && hasLeftStartRef.current) {
             const lastPoint = currentPath[currentPath.length - 1];
             if (isCloseToStart(lastPoint, startPoint)) {
-                ctx.strokeStyle = '#10b981'; // green-500 for preview
+                ctx.strokeStyle = '#10b981';
                 ctx.setLineDash([5, 5]);
                 ctx.beginPath();
                 ctx.moveTo(lastPoint.x, lastPoint.y);
@@ -86,23 +67,55 @@ export default function Canvas({ onPathComplete }: CanvasProps) {
                 ctx.setLineDash([]);
             }
         }
-    }, [currentPath, startPoint, isCloseToStart, clearCanvas]);
+    }, [currentPath, startPoint, getContext, isCloseToStart]);
 
-    // Redraw when current path changes
+    // Close and export the path
+    const closePath = useCallback(() => {
+        if (!startPoint || currentPath.length < 2) return;
+        const closedPath = [...currentPath, startPoint];
+        onPathComplete?.(closedPath);
+        resetDrawing();
+    }, [startPoint, currentPath, onPathComplete]);
+
+    // Reset drawing state
+    const resetDrawing = useCallback(() => {
+        setCurrentPath([]);
+        setIsDrawing(false);
+        setStartPoint(null);
+        hasLeftStartRef.current = false;
+        getContext()?.clearRect(0, 0, canvasRef.current?.width || 0, canvasRef.current?.height || 0);
+    }, [getContext]);
+
+    // Redraw when path changes
     useEffect(() => {
-        drawCurrentPath();
-    }, [drawCurrentPath]);
+        drawPath();
+    }, [drawPath]);
 
-    // Handle mouse down - start drawing
+    // Setup canvas size and resize handler
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const resize = () => {
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+            drawPath();
+        };
+
+        resize();
+        window.addEventListener('resize', resize);
+        return () => window.removeEventListener('resize', resize);
+    }, [drawPath]);
+
+    // Mouse event handlers
     const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
         const point = getMousePos(e);
         setIsDrawing(true);
         setStartPoint(point);
         setCurrentPath([point]);
-        hasLeftStartNeighborhoodRef.current = false; // Reset when starting new drawing
+        hasLeftStartRef.current = false;
     }, [getMousePos]);
 
-    // Handle mouse move - continue drawing
     const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
         if (!isDrawing || !startPoint) return;
 
@@ -110,97 +123,50 @@ export default function Canvas({ onPathComplete }: CanvasProps) {
         const newPath = [...currentPath, point];
         setCurrentPath(newPath);
 
-        if (!hasLeftStartNeighborhoodRef.current && !isCloseToStart(point, startPoint))
-            hasLeftStartNeighborhoodRef.current = true;
-
-        if (newPath.length > 2 && hasLeftStartNeighborhoodRef.current && isCloseToStart(point, startPoint)) {
-            const closedPath = [...newPath, startPoint];
-            
-            // Export the path
-            exportedPathsRef.current.push(closedPath);
-            if (onPathComplete) {
-                onPathComplete(closedPath);
-            }
-            
-            // Clear canvas and reset state
-            clearCanvas();
-            setCurrentPath([]);
-            setIsDrawing(false);
-            setStartPoint(null);
-            hasLeftStartNeighborhoodRef.current = false;
+        // Track if we've left the start neighborhood
+        if (!hasLeftStartRef.current && !isCloseToStart(point, startPoint)) {
+            hasLeftStartRef.current = true;
         }
-    }, [isDrawing, startPoint, currentPath, getMousePos, isCloseToStart]);
 
-    // Handle mouse up - finish drawing
+        // Auto-close if back near start
+        if (newPath.length > 2 && hasLeftStartRef.current && isCloseToStart(point, startPoint)) {
+            closePath();
+        }
+    }, [isDrawing, startPoint, currentPath, getMousePos, isCloseToStart, closePath]);
+
     const handleMouseUp = useCallback(() => {
-        if (!isDrawing || !startPoint || currentPath.length < 2) {
-            setIsDrawing(false);
-            setStartPoint(null);
-            setCurrentPath([]);
-            hasLeftStartNeighborhoodRef.current = false;
-            return;
-        }
+        if (isDrawing) closePath();
+    }, [isDrawing, closePath]);
 
-        // Close the path by connecting to start
-        const closedPath = [...currentPath, startPoint];
-        
-        // Export the path
-        exportedPathsRef.current.push(closedPath);
-        if (onPathComplete) {
-            onPathComplete(closedPath);
-        }
-        
-        // Clear canvas and reset state
-        clearCanvas();
-        setCurrentPath([]);
-        setIsDrawing(false);
-        setStartPoint(null);
-        hasLeftStartNeighborhoodRef.current = false;
-    }, [isDrawing, startPoint, currentPath, onPathComplete, clearCanvas]);
-    
     const handleMouseLeave = useCallback(() => {
-        if (isDrawing) {
-            setCurrentPath([]);
-            setIsDrawing(false);
-            setStartPoint(null);
-            hasLeftStartNeighborhoodRef.current = false;
-        }
-    }, [isDrawing]);
+        if (isDrawing) resetDrawing();
+    }, [isDrawing, resetDrawing]);
 
-  // Set canvas size
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    // Check if showing close hint
+    const showCloseHint = isDrawing && 
+        currentPath.length > 2 && 
+        hasLeftStartRef.current && 
+        startPoint && 
+        isCloseToStart(currentPath[currentPath.length - 1], startPoint);
 
-        const resizeCanvas = () => {
-            canvas.width = canvas.offsetWidth;
-            canvas.height = canvas.offsetHeight;
-            drawCurrentPath();
-        };
-
-        resizeCanvas();
-        window.addEventListener('resize', resizeCanvas);
-        return () => window.removeEventListener('resize', resizeCanvas);
-    }, [drawCurrentPath]);
-
-  return (
-    <div className="w-full h-full relative">
-      <canvas
-        ref={canvasRef}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseLeave}
-        className="w-full h-full border border-gray-300 dark:border-gray-700 cursor-crosshair"
-      />
-      {isDrawing && (
-        <div className="absolute top-2 left-2 text-sm text-gray-600 dark:text-gray-400">
-          Drawing... {currentPath.length > 2 && hasLeftStartNeighborhoodRef.current && isCloseToStart(currentPath[currentPath.length - 1], startPoint!) && (
-            <span className="text-green-600 dark:text-green-400">(Close to start - release to close)</span>
-          )}
+    return (
+        <div className="w-full h-full relative">
+            <canvas
+                ref={canvasRef}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseLeave}
+                className="w-full h-full border border-gray-300 dark:border-gray-700 cursor-crosshair"
+            />
+            {isDrawing && (
+                <div className="absolute top-2 left-2 text-sm text-gray-600 dark:text-gray-400">
+                    Drawing... {showCloseHint && (
+                        <span className="text-green-600 dark:text-green-400">(Close to start - release to close)</span>
+                    )}
+                </div>
+            )}
         </div>
-      )}
-    </div>
-  );
+    );
 }
 
