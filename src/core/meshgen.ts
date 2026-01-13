@@ -3,10 +3,6 @@ import * as geo3d from '../utils/geo3d';
 import Queue from '../utils/queue';
 import Vector from '@/lib/linalg/vector';
 import { Point, Vec2 } from '../interface/point';
-import { MeshData } from '../interface/mesh';
-import { SkeletonData } from '../interface/skeleton';
-import { SkinWeightInfo } from '../interface/skeleton';
-import { createTemporaryReferenceSet } from 'next/dist/server/app-render/entry-base';
 
 const { Mesh } = require('@/lib/geometry/mesh');
 
@@ -78,9 +74,14 @@ class MeshGen {
         this.pruneTriangulation();
     }
     private buildTriangulation() {
-        if (isClockwise(this.polygon)) {
+        if (geo2d.ccw(this.polygon[0], this.polygon[1], this.polygon[2]))
             this.polygon = this.polygon.reverse();
-        }
+
+        let centroid = this.polygon.reduce((acc, p) => acc.plus(p), new Vec2(0, 0));
+        centroid.x /= this.polygon.length;
+        centroid.y /= this.polygon.length;
+        
+        this.polygon = this.polygon.map(p => p.minus(centroid));
         this.polygon = reparameterize(this.polygon, this.isodistance);
         this.triangulation = new (Mesh as any)();
         this.triangulation.build({
@@ -239,7 +240,6 @@ class MeshGen {
             if (chordIndices.length === 1)  this.chordCaps.push([chordIndices[0], chordCorner]);
             if (chordIndices.length === 3)  this.chordJunctions.push(chordIndices);
         }
-        console.log(this.chordCaps.length, this.chordJunctions.length);
     }
     private generateCircle(c: Vector, d: Vector, r: number) {
         let z = new Vector(0, 0, 1);
@@ -335,6 +335,141 @@ class MeshGen {
         }
         return faces;
     }
+    generateSkeleton(boneDeviationThreshold: number, boneLengthThreshold: number, algo: 'chord' | 'mat') {
+        let g = new Graph();
+        let Q = new Queue();
+
+        if (algo === 'chord') {
+            let vertIdx = this.chordAxis.length;
+            for (let i = 0; i < this.chordAxis.length; i++)
+                g.setNode(i, this.chordAxis[i]);
+
+            for (let e of this.chordGraph.edges())
+                g.setEdge(e.v, e.w, true);
+
+            for (let [c0, c1, c2] of this.chordJunctions) {
+                let p0 = g.node(c0);
+                let p1 = g.node(c1);
+                let p2 = g.node(c2);
+                let barycenter = p0.plus(p1).plus(p2).times(1/3);
+                g.setNode(vertIdx, barycenter);
+                g.setEdge(c0, vertIdx); g.setEdge(vertIdx, c0);
+                g.setEdge(c1, vertIdx); g.setEdge(vertIdx, c1);
+                g.setEdge(c2, vertIdx); g.setEdge(vertIdx, c2);
+
+                vertIdx++;
+            }
+        } else {
+        }
+        for (let u of g.nodes())
+            Q.push(u);
+
+        while (Q.size() > 0) {
+            let i = Q.pop();
+            let p = g.node(i);
+        
+            let neighbors = g.outEdges(i).map(e => e.w);
+            if (neighbors.length !== 2)
+                continue;
+        
+            let n0 = parseInt(neighbors[0]);
+            let n1 = parseInt(neighbors[1]);
+        
+            let p0 = g.node(n0);
+            let p1 = g.node(n1);
+        
+            let axisDir = p1.minus(p0).unit();
+            let baseDir = axisDir.cross(new Vector(0, 0, 1)).unit();
+        
+            let a1 = p0.plus(baseDir.times(this.chordLengths[n0]/2));
+            let b1 = p1.plus(baseDir.times(this.chordLengths[n1]/2));
+            let a2 = p0.minus(baseDir.times(this.chordLengths[n0]/2));
+            let b2 = p1.minus(baseDir.times(this.chordLengths[n1]/2));
+        
+            let chordDir = this.chordDirs[i];
+            if (chordDir.dot(baseDir) < 0)
+                chordDir = chordDir.times(-1);
+        
+            let c1 = p.plus(chordDir.times(this.chordLengths[i]/2));
+            let c2 = p.minus(chordDir.times(this.chordLengths[i]/2));
+        
+            let side1 = a1.minus(b1).unit();
+            let side2 = a2.minus(b2).unit();
+        
+            let v0 = p.minus(p0);
+            let v1 = c1.minus(b1);
+            let v2 = c2.minus(b2);
+        
+            v0 = v0.minus(axisDir.times(v0.dot(axisDir)));
+            v1 = v1.minus(side1.times(v1.dot(side1)));
+            v2 = v2.minus(side2.times(v2.dot(side2)));
+        
+            let dev = 0.5 * v0.norm() + 0.25 * (v1.norm() + v2.norm());
+            if (dev < boneDeviationThreshold) {
+                g.setEdge(n0, n1, true);
+                g.setEdge(n1, n0, true);
+                g.removeNode(i);
+            }
+        }
+        for (let u of g.nodes())    if (g.outEdges(u).length === 1) {
+            let p = null;
+            let v = u;
+
+            while (true) {
+                let neighbors = g.outEdges(v).map(e => e.w);
+                if (neighbors.length !== 2 && p !== null)
+                    break;
+                
+                for (let x of neighbors) if (x !== p) {
+                    g.setEdge(v, x, false);
+                    g.setEdge(x, v, false);
+                    p = v;
+                    v = x;
+                    break;
+                }
+            }
+        }
+        for (let e of g.edges())    if (e.v < e.w)
+            Q.push([e.v, e.w]);
+
+        while (Q.size() > 0) {
+            let [u, v] = Q.pop();
+            if (!g.edge(u, v))
+                continue;
+    
+            let p0 = g.node(u);
+            let p1 = g.node(v);
+            let dist = p1.minus(p0).norm();
+            if (dist < boneLengthThreshold) {
+                for (let e of g.outEdges(v))
+                    if (e.w !== u) {
+                        let tmp = g.edge(v, e.w);
+                        g.setEdge(u, e.w, tmp);
+                        g.setEdge(e.w, u, tmp);
+                    }
+                g.setNode(u, p0.plus(p1).times(0.5));
+                g.removeNode(v);
+
+                for (let e of g.outEdges(u))
+                    Q.push([u, e.w]);
+            }
+        }
+        let idxMap = new Map();
+        let joints = [];
+        let bones = [];
+
+        for (let u of g.nodes()) {
+            idxMap.set(u, joints.length);
+            joints.push(g.node(u));
+        }
+        for (let e of g.edges()) if (e.v < e.w) {
+            bones.push([
+                idxMap.get(e.v),
+                idxMap.get(e.w)
+            ]);
+        }
+        return [joints, bones];
+    }
     generatePipes() {
         let nC = this.chordGraph.nodeCount();
         let visited = new Array(nC).fill(false);
@@ -354,7 +489,6 @@ class MeshGen {
             for (let v of disc)
                 this.allVertices.push(v);
         }
-        console.log("Number of generated discs: ", nC);
 
         for (let i = 0; i < nC; ++i) {
             if (this.chordGraph.outEdges(i).length > 1)
