@@ -4,6 +4,7 @@ import Step1 from './Step1';
 import Step2 from './Step2';
 import Step3 from './Step3';
 import Step4 from './Step4';
+import Step5 from './Step5';
 import { MeshGenParams } from '@/hooks/meshgen';
 
 interface MeshGenControllerProps {
@@ -19,6 +20,9 @@ interface MeshGenControllerProps {
         setIsometricIterations: (value: number) => void;
         setIsometricLength: (value: number) => void;
         setIsometricLengthAuto: (value: boolean) => void;
+        setBoneDevThreshold: (value: number) => void;
+        setBoneLenThreshold: (value: number) => void;
+        setSkelAlgo: (value: 'chord' | 'mat') => void;
     };
     onNext: () => void;
     onBack: () => void;
@@ -30,6 +34,7 @@ const STEP_NAMES: { [key: number]: string } = {
     2: 'Chord Smoothing',
     3: 'Surface Generation',
     4: 'Isometric Remeshing',
+    5: 'Skeleton Generation',
 };
 
 export default function MeshGenController({
@@ -70,6 +75,15 @@ export default function MeshGenController({
                 onIsometricIterationsChange={onParamChange.setIsometricIterations}
                 onIsometricLengthChange={onParamChange.setIsometricLength}
                 onIsometricLengthAutoChange={onParamChange.setIsometricLengthAuto}
+            />;
+        case 5:
+            return <Step5
+                boneDevThreshold={params.boneDevThreshold}
+                boneLenThreshold={params.boneLenThreshold}
+                skelAlgo={params.skelAlgo}
+                onBoneDevThresholdChange={onParamChange.setBoneDevThreshold}
+                onBoneLenThresholdChange={onParamChange.setBoneLenThreshold}
+                onSkelAlgoChange={onParamChange.setSkelAlgo}
             />;
         default:
             return null;

@@ -17,6 +17,7 @@ const COLORS = {
     MESH_3D_GREEN: 0x10b981,  
     MESH_3D_YELLOW: 0xfbbf24,
     MESH_3D_GREY: 0xc0c0c0,
+    SKELETON: 0xff6b6b,
 } as const;
 
 
@@ -31,6 +32,8 @@ export default function MeshGenOverlay({ state }: { state: MeshGenState }) {
     const wireframe2dRef = useRef<THREE.LineSegments | null>(null);
     const wireframe3dRef = useRef<THREE.Group | null>(null);
     const polygonRef = useRef<THREE.Line | null>(null);
+    const skeletonRef = useRef<THREE.Group | null>(null);
+    const firstRender = useRef(true);
     
     const [viewSpaceReady, setViewSpaceReady] = useState(false);
     
@@ -54,8 +57,17 @@ export default function MeshGenOverlay({ state }: { state: MeshGenState }) {
         controlsRef.current = refs.controlsRef.current;
         setViewSpaceReady(true);
 
-        if (sceneRef.current) {
+        if (sceneRef.current)
             sceneRef.current.background = new THREE.Color(COLORS.BACKGROUND);
+        
+        if (firstRender.current) {
+            firstRender.current = false;
+            cameraRef.current.position.set(0, 0, 150);
+            cameraRef.current.lookAt(new THREE.Vector3(0, 0, 0));
+            if (controlsRef.current) {
+                controlsRef.current.target.set(0, 0, 0);
+                controlsRef.current.update();
+            }
         }
     };
     const cleanMesh = (scene: THREE.Scene, mesh: THREE.Mesh | null, wireframe: THREE.LineSegments | null) => {
@@ -110,13 +122,6 @@ export default function MeshGenOverlay({ state }: { state: MeshGenState }) {
         wireframe2dRef.current = new THREE.LineSegments(wireframe, new THREE.LineBasicMaterial({ color: COLORS.MESH_2D_WIREFRAME }));
         scene.add(mesh2dRef.current);
         scene.add(wireframe2dRef.current);
-
-        cameraRef.current.position.set(0, 0, 100);
-        cameraRef.current.lookAt(new THREE.Vector3(0, 0, 0));
-        if (controlsRef.current) {
-            controlsRef.current.target.set(0, 0, 0);
-            controlsRef.current.update();
-        }
     };
     const renderStep2 = (scene: THREE.Scene, chords: [Point[], Point[], number[]]) => {
         const [chordAxis, chordDirs, chordLengths] = chords;
@@ -188,6 +193,49 @@ export default function MeshGenOverlay({ state }: { state: MeshGenState }) {
         scene.add(mesh3dRef.current);
         scene.add(wireframe3dRef.current);
     };
+    const renderStep5 = (scene: THREE.Scene, skeleton: [Point[], [number, number][]]) => {
+        const [joints, bones] = skeleton;
+        if (joints.length === 0 || bones.length === 0) return;
+
+        const skeletonGroup = new THREE.Group();
+        // Set render order to ensure skeleton renders after mesh
+        skeletonGroup.renderOrder = 1000;
+
+        // Render bones as lines
+        for (const [parentIdx, childIdx] of bones) {
+            const parent = joints[parentIdx];
+            const child = joints[childIdx];
+
+            const geometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(parent.x, parent.y, parent.z || 0),
+                new THREE.Vector3(child.x, child.y, child.z || 0)
+            ]);
+            const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ 
+                color: COLORS.SKELETON,
+                linewidth: 3,
+                depthTest: false, // Always render on top
+                depthWrite: false
+            }));
+            skeletonGroup.add(line);
+        }
+
+        // Render joints as spheres (reuse geometry and material for efficiency)
+        const sphereGeometry = new THREE.SphereGeometry(1, 8, 8);
+        const sphereMaterial = new THREE.MeshBasicMaterial({ 
+            color: COLORS.SKELETON,
+            depthTest: false, // Always render on top
+            depthWrite: false
+        });
+        
+        for (const joint of joints) {
+            const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+            sphere.position.set(joint.x, joint.y, joint.z || 0);
+            skeletonGroup.add(sphere);
+        }
+
+        scene.add(skeletonGroup);
+        skeletonRef.current = skeletonGroup;
+    };
 
     useEffect(() => {
         if (!viewSpaceReady || !sceneRef.current) {
@@ -195,13 +243,14 @@ export default function MeshGenOverlay({ state }: { state: MeshGenState }) {
             return;
         }
         const scene = sceneRef.current;
-        const { currentStep, mesh2D, mesh3D, chordData, capOffset, junctionOffset } = state;
+        const { currentStep, mesh2D, mesh3D, chordData, capOffset, junctionOffset, skeleton } = state;
 
         cleanLine(scene, polygonRef.current);
         cleanMesh(scene, mesh2dRef.current, wireframe2dRef.current);
         cleanGroup(scene, chordRef.current);
         cleanGroup(scene, mesh3dRef.current);
         cleanGroup(scene, wireframe3dRef.current);
+        cleanGroup(scene, skeletonRef.current);
 
         polygonRef.current = null;
         mesh2dRef.current = null;
@@ -209,12 +258,17 @@ export default function MeshGenOverlay({ state }: { state: MeshGenState }) {
         wireframe2dRef.current = null;
         wireframe3dRef.current = null;
         chordRef.current = null;
+        skeletonRef.current = null;
 
         if (currentStep >= 2 && mesh2D)     renderPolygon(scene, mesh2D[0]);
         if (currentStep == 1 && mesh2D)     renderStep1(scene, mesh2D);
         if (currentStep == 2 && chordData)  renderStep2(scene, chordData);
         if (currentStep == 3 && mesh3D)     renderStep3(scene, mesh3D, capOffset, junctionOffset);
-        if (currentStep == 4 && mesh3D)     renderStep4(scene, mesh3D);
+        if (currentStep >= 4 && mesh3D)     renderStep4(scene, mesh3D);
+        if (currentStep == 5 && skeleton)   renderStep5(scene, skeleton);
+        if (currentStep > 5) {
+            firstRender.current = true;
+        }
     }, [state, viewSpaceReady]);
 
     return (

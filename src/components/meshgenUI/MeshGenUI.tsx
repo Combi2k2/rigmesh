@@ -18,6 +18,9 @@ interface MeshGenUIProps {
         setIsometricIterations: (value: number) => void;
         setIsometricLength: (value: number) => void;
         setIsometricLengthAuto: (value: boolean) => void;
+        setBoneDevThreshold: (value: number) => void;
+        setBoneLenThreshold: (value: number) => void;
+        setSkelAlgo: (value: 'chord' | 'mat') => void;
     };
     onCancel?: () => void;
 }
@@ -37,13 +40,13 @@ export default function MeshGenUI({
             </div>
             <div className="w-1/3 flex flex-col bg-gray-50 dark:bg-gray-900">
                 <MeshGenController
-                currentStep={state.currentStep}
-                totalSteps={4}
-                params={params}
-                onParamChange={onParamChange}
-                onNext={onNext}
-                onBack={onBack}
-                onCancel={onCancel}
+                    currentStep={state.currentStep}
+                    totalSteps={5}
+                    params={params}
+                    onParamChange={onParamChange}
+                    onNext={onNext}
+                    onBack={onBack}
+                    onCancel={onCancel}
                 />
             </div>
         </div>
