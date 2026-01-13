@@ -12,6 +12,7 @@ export interface MeshGenState {
     chordData: [Vec3[], Vec3[], number[]] | null;
     capOffset: number;
     junctionOffset: number;
+    skeleton: [Vec3[], [number, number][]] | null;
 }
 
 export interface MeshGenParams {
@@ -23,6 +24,9 @@ export interface MeshGenParams {
     isometricIterations: number;
     isometricLength: number;
     isometricLengthAuto: boolean;
+    boneDevThreshold: number;
+    boneLenThreshold: number;
+    skelAlgo: 'chord' | 'mat';
 }
 
 export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void) {
@@ -47,8 +51,15 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
     const [isometricIterations, setIsometricIterations] = useState<number>(6);
     const [isometricLength, setIsometricLength] = useState<number>(0);
     const [isometricLengthAuto, setIsometricLengthAuto] = useState<boolean>(true);
-    const [V_clone, setV_clone] = useState<Vec3[]>([]);
-    const [F_clone, setF_clone] = useState<number[][]>([]);
+    const [V_mock3, setV_mock3] = useState<Vec3[]>([]);
+    const [F_mock3, setF_mock3] = useState<number[][]>([]);
+    const [V_mock4, setV_mock4] = useState<Vec3[]>([]);
+    const [F_mock4, setF_mock4] = useState<number[][]>([]);
+
+    const [skeleton, setSkeleton] = useState<[Vec3[], [number, number][]] | null>(null);
+    const [boneDevThreshold, setBoneDevThreshold] = useState<number>(0.1);
+    const [boneLenThreshold, setBoneLenThreshold] = useState<number>(5);
+    const [skelAlgo, setSkelAlgo] = useState<'chord' | 'mat'>('chord');
   
     const meshGenRef = useRef<MeshGen | null>(null);
 
@@ -79,35 +90,45 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
         const mesh3DData = meshGen.getMesh3D() as [Vec3[], number[][]];
         setInit3(true);
         setMesh3D(mesh3DData);
-        setV_clone(mesh3DData[0].map(v => new Vec3(v.x, v.y, v.z)));
-        setF_clone(mesh3DData[1].map(f => [...f]));
+        setV_mock3(mesh3DData[0].map(v => new Vec3(v.x, v.y, v.z)));
+        setF_mock3(mesh3DData[1].map(f => [...f]));
     }, []);
     
     const processStep3 = useCallback(() => {
-        const V = V_clone.map(v => new Vec3(v.x, v.y, v.z));
-        const F = F_clone.map(f => [...f]);
+        const V = V_mock3.map(v => new Vec3(v.x, v.y, v.z));
+        const F = F_mock3.map(f => [...f]);
         if (!meshGenRef.current) return;
         meshGenRef.current.runMeshSmoothing(V, F, smoothFactor);
         setMesh3D([V, F]);
-    }, [smoothFactor, V_clone, F_clone]);
+    }, [smoothFactor, V_mock3, F_mock3]);
 
     const preprocessStep4 = useCallback(() => {
         if (!mesh3D) return;
-        setV_clone(mesh3D[0].map(v => new Vec3(v.x, v.y, v.z)));
-        setF_clone(mesh3D[1].map(f => [...f]));
+        setV_mock4(mesh3D[0].map(v => new Vec3(v.x, v.y, v.z)));
+        setF_mock4(mesh3D[1].map(f => [...f]));
         setInit4(true);
     }, [mesh3D]);
     
     const processStep4 = useCallback(() => {
-        let V = [...V_clone];
-        let F = [...F_clone];
+        const V = V_mock4.map(v => new Vec3(v.x, v.y, v.z));
+        const F = F_mock4.map(f => [...f]);
         
         const length = isometricLengthAuto ? -1 : isometricLength;
         geo3d.runIsometricRemesh(V, F, isometricIterations, length);
         
         setMesh3D([V, F]);
-    }, [isometricIterations, isometricLength, isometricLengthAuto, V_clone, F_clone]);
+    }, [isometricIterations, isometricLength, isometricLengthAuto, V_mock4, F_mock4]);
+    
+    const processStep5 = useCallback(() => {
+        if (!meshGenRef.current) return;
 
+        setSkeleton(meshGenRef.current.generateSkeleton(
+            boneDevThreshold,
+            boneLenThreshold,
+            skelAlgo) as [Vec3[], [number, number][]]
+        );
+    }, [boneDevThreshold, boneLenThreshold, skelAlgo]);
+    
     const handlePathComplete = useCallback((path: Vec2[]) => {
         setLatestPath(path);
         setCurrentStep(1);
@@ -130,6 +151,7 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
         setChordData(null);
         setInit3(false);
         setInit4(false);
+        setSkeleton(null);
     }, []);
 
     useEffect(() => {
@@ -147,15 +169,17 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
         if (currentStep === 2) processStep2();
         if (currentStep === 3 && init3) processStep3();
         if (currentStep === 4 && init4) processStep4();
+        if (currentStep === 5) processStep5();
     }, [currentStep, latestPath,
         processStep1,
         processStep2,
         processStep3, init3,
-        processStep4, init4
+        processStep4, init4,
+        processStep5,
     ]);
     
     useEffect(() => {
-        if (currentStep > 4 && mesh3D && onMeshComplete) {
+        if (currentStep > 5 && mesh3D && onMeshComplete) {
             onMeshComplete(mesh3D);
             setCurrentStep(1);
             setLatestPath(null);
@@ -164,6 +188,7 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
             setChordData(null);
             setInit3(false);
             setInit4(false);
+            setSkeleton(null);
         }
     }, [currentStep, mesh3D, onMeshComplete]);
 
@@ -174,6 +199,7 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
         chordData,
         capOffset,
         junctionOffset,
+        skeleton,
     };
 
     const params: MeshGenParams = {
@@ -185,6 +211,9 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
         isometricIterations,
         isometricLength,
         isometricLengthAuto,
+        boneDevThreshold,
+        boneLenThreshold,
+        skelAlgo,
     };
 
     return {
@@ -203,6 +232,9 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
             setIsometricIterations,
             setIsometricLength,
             setIsometricLengthAuto,
+            setBoneDevThreshold,
+            setBoneLenThreshold,
+            setSkelAlgo,
         },
     };
 }
