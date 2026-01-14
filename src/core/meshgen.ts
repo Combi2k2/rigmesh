@@ -565,6 +565,8 @@ class MeshGen {
                 
                 capDisc.push(disc);
                 capOffset.push(this.allVertices.length);
+                this.chordOffset.push(this.allVertices.length);
+                this.chordBufSize.push(disc.length);
 
                 for (let v of disc)
                     this.allVertices.push(v);
@@ -572,6 +574,8 @@ class MeshGen {
             capDisc.push([co]);
             capOffset.push(this.allVertices.length);
             this.allVertices.push(co);
+            this.chordOffset.push(this.allVertices.length);
+            this.chordBufSize.push(1);
             
             for (let j = 1; j < capDisc.length; j++) {
                 let n1 = capDisc[j-1].length;

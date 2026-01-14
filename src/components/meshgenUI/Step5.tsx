@@ -23,9 +23,9 @@ export default function Step5({
         </label>
         <input
           type="range"
-          min="0.01"
-          max="1.0"
-          step="0.01"
+          min="0.0"
+          max="20.0"
+          step="0.1"
           value={boneDevThreshold}
           onChange={(e) => onBoneDevThresholdChange(Number(e.target.value))}
           className="w-full"

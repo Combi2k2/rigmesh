@@ -49,7 +49,7 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
     
     const [init4, setInit4] = useState<boolean>(false);
     const [isometricIterations, setIsometricIterations] = useState<number>(6);
-    const [isometricLength, setIsometricLength] = useState<number>(0);
+    const [isometricLength, setIsometricLength] = useState<number>(5);
     const [isometricLengthAuto, setIsometricLengthAuto] = useState<boolean>(true);
     const [V_mock3, setV_mock3] = useState<Vec3[]>([]);
     const [F_mock3, setF_mock3] = useState<number[][]>([]);
@@ -77,6 +77,7 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
         meshGen.runChordSmoothing(laplacianIterations, laplacianAlpha);
         const chords = meshGen.getChords() as [Vec3[], Vec3[], number[]];
         setChordData(chords);
+        setInit3(false);
     }, [laplacianIterations, laplacianAlpha]);
 
     const preprocessStep3 = useCallback(() => {
@@ -100,6 +101,7 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
         if (!meshGenRef.current) return;
         meshGenRef.current.runMeshSmoothing(V, F, smoothFactor);
         setMesh3D([V, F]);
+        setInit4(false);
     }, [smoothFactor, V_mock3, F_mock3]);
 
     const preprocessStep4 = useCallback(() => {
@@ -112,10 +114,9 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
     const processStep4 = useCallback(() => {
         const V = V_mock4.map(v => new Vec3(v.x, v.y, v.z));
         const F = F_mock4.map(f => [...f]);
-        
+
         const length = isometricLengthAuto ? -1 : isometricLength;
         geo3d.runIsometricRemesh(V, F, isometricIterations, length);
-        
         setMesh3D([V, F]);
     }, [isometricIterations, isometricLength, isometricLengthAuto, V_mock4, F_mock4]);
     
@@ -149,8 +150,6 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
         setMesh2D(null);
         setMesh3D(null);
         setChordData(null);
-        setInit3(false);
-        setInit4(false);
         setSkeleton(null);
     }, []);
 
