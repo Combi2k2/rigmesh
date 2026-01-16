@@ -272,15 +272,13 @@ export default function MeshGenOverlay({ state }: { state: MeshGenState }) {
     }, [state, viewSpaceReady]);
 
     return (
-        <div className="absolute inset-0 z-50 bg-black bg-opacity-60">
+        <div className="absolute inset-0 z-50 bg-black bg-opacity-100 flex items-center justify-center">
             <ViewSpace
                 onViewSpaceReady={handleViewSpaceReady}
-                className="w-full h-full"
+                className="w-4/5 h-4/5 max-w-6xl max-h-[90vh]"
                 style={{ 
                     pointerEvents: 'auto',
                     position: 'relative',
-                    minHeight: '100%',
-                    minWidth: '100%'
                 }}
             />
         </div>

@@ -2,13 +2,14 @@
 
 import { useRef, useEffect, RefObject } from 'react';
 import * as THREE from 'three';
-import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
+import { OrbitControls } from "three/addons/controls/OrbitControls.js"
+import { ViewportGizmo } from "three-viewport-gizmo"
 
 export interface ViewSpaceReturn {
     sceneRef: RefObject<THREE.Scene>;
     cameraRef: RefObject<THREE.PerspectiveCamera>;
     rendererRef: RefObject<THREE.WebGLRenderer>;
-    controlsRef: RefObject<TrackballControls>;
+    controlsRef: RefObject<OrbitControls>;
 }
 
 // Default configuration constants
@@ -61,7 +62,7 @@ export function useViewSpace(
     const sceneRef = useRef<THREE.Scene | null>(null);
     const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
     const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-    const controlsRef = useRef<TrackballControls | null>(null);
+    const controlsRef = useRef<OrbitControls | null>(null);
     const animationFrameIdRef = useRef<number | null>(null);
 
      // Initialize the 3D view space
@@ -103,20 +104,24 @@ export function useViewSpace(
         container.appendChild(renderer.domElement);
         rendererRef.current = renderer;
 
-        const controls = new TrackballControls(camera, renderer.domElement);
+        const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
         controlsRef.current = controls;
+        
+        const gizmo = new ViewportGizmo(camera, renderer);
+        gizmo.attachControls(controls);
 
         const render = () => {
             const currentScene = sceneRef.current;
             const currentCamera = cameraRef.current;
             const currentRenderer = rendererRef.current;
             const currentControls = controlsRef.current;
-
+            
             if (currentScene && currentCamera && currentRenderer && currentControls) {
                 currentControls.update();
                 currentRenderer.render(currentScene, currentCamera);
+                gizmo.render();
             }
         };
         const animate = () => {
@@ -134,6 +139,7 @@ export function useViewSpace(
             cameraRef.current.aspect = newWidth / newHeight;
             cameraRef.current.updateProjectionMatrix();
             rendererRef.current.setSize(newWidth, newHeight);
+            gizmo.update();
         };
         window.addEventListener('resize', handleResize);
 
@@ -154,6 +160,7 @@ export function useViewSpace(
                 controlsRef.current.dispose();
                 controlsRef.current = null;
             }
+            gizmo.dispose();
         };
     }, [containerRef]);
 
