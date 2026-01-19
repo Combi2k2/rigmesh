@@ -79,6 +79,22 @@ export function useViewSpace(
         });
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(DEFAULT_BACKGROUND_COLOR);
+        
+        const gridHelper = new THREE.GridHelper(1000, 100, 0x444444, 0x222222);
+        scene.add(gridHelper);
+        
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(50, 50, 50);
+        directionalLight.castShadow = true;
+        scene.add(directionalLight);
+        
+        const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
+        directionalLight2.position.set(-50, 30, -50);
+        scene.add(directionalLight2);
+        
         sceneRef.current = scene;
 
         // Get container dimensions
@@ -109,7 +125,13 @@ export function useViewSpace(
         controls.dampingFactor = 0.05;
         controlsRef.current = controls;
         
-        const gizmo = new ViewportGizmo(camera, renderer);
+        const gizmo = new ViewportGizmo(camera, renderer, {
+            placement: 'top-left',
+            offset: {
+                left: 20,
+                top: 20
+            }
+        });
         gizmo.attachControls(controls);
 
         const render = () => {
