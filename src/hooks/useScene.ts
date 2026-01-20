@@ -19,7 +19,6 @@ export interface SceneHooks {
     createSkinnedMesh: (mesh: MeshData, skel: SkelData, skinWeights: number[][], skinIndices: number[][]) => THREE.SkinnedMesh | null;
     addSkinnedMesh: (mesh: THREE.SkinnedMesh) => void;
     delSkinnedMesh: (mesh: THREE.SkinnedMesh) => void;
-    meshSetRef: RefObject<Set<THREE.SkinnedMesh>>;
     menuContext: SceneMenuContext | null;
     setMenuContext: (context: SceneMenuContext | null) => void;
 }
@@ -29,7 +28,6 @@ export interface SceneHooks {
  * Provides functions to create, add, and remove skinned meshes from the scene.
  */
 export function useScene(sceneRef: RefObject<THREE.Scene>): SceneHooks {
-    const meshSetRef = useRef<Set<THREE.SkinnedMesh>>(new Set());
     const [menuContext, setMenuContext] = useState<SceneMenuContext | null>(null);
 
     const createSkinnedMesh = useCallback((
@@ -67,6 +65,12 @@ export function useScene(sceneRef: RefObject<THREE.Scene>): SceneHooks {
         geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights.flat(), 4));
         geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices.flat(), 4));
 
+        const skinnedMesh = new THREE.SkinnedMesh(geometry, new THREE.MeshStandardMaterial({
+            color: 0xffffff,
+            skinning: true,
+            side: THREE.DoubleSide
+        }));
+
         const bonesArray: THREE.Bone[] = [];
         const joints = skel[0];
 
@@ -83,17 +87,12 @@ export function useScene(sceneRef: RefObject<THREE.Scene>): SceneHooks {
         });
         bonesArray[0].position.set(joints[0].x, joints[0].y, joints[0].z);
         bonesArray[0].updateMatrixWorld();
-
-        const skeleton = new THREE.Skeleton(bonesArray);
-        const material = new THREE.MeshStandardMaterial({
-            color: 0xffffff,
-            skinning: true,
-            side: THREE.DoubleSide
+        bonesArray.forEach(bone => {
+            skinnedMesh.add(bone);
+            bone.updateMatrix();
         });
 
-        const skinnedMesh = new THREE.SkinnedMesh(geometry, material);
-        skinnedMesh.add(bonesArray[0]);
-        skinnedMesh.bind(skeleton);
+        skinnedMesh.bind(new THREE.Skeleton(bonesArray));
 
         return skinnedMesh;
     }, []);
@@ -101,47 +100,50 @@ export function useScene(sceneRef: RefObject<THREE.Scene>): SceneHooks {
     const addSkinnedMesh = useCallback((mesh: THREE.SkinnedMesh) => {
         if (!sceneRef.current) return;
         
-        sceneRef.current.add(mesh);
-        meshSetRef.current.add(mesh);
+        mesh.geometry.computeBoundingBox();
+        const boundingBox = mesh.geometry.boundingBox;
+        
+        const center = new THREE.Vector3();
+        boundingBox.getCenter(center);
+
+        const box = new THREE.Mesh(
+            new THREE.BoxGeometry(
+                boundingBox.max.x - boundingBox.min.x,
+                boundingBox.max.y - boundingBox.min.y,
+                boundingBox.max.z - boundingBox.min.z
+            ),
+            new THREE.MeshBasicMaterial({ visible: false })
+        );
+        box.position.copy(center);
+        mesh.position.sub(center);
+
+        // Initialize box matrices before adding mesh
+        box.updateMatrix();
+        box.updateMatrixWorld(true);
+
+        box.add(mesh);
+
+        sceneRef.current.add(box);
     }, [sceneRef]);
 
     const delSkinnedMesh = useCallback((mesh: THREE.SkinnedMesh) => {
         if (!sceneRef.current) return;
         
-        if (meshSetRef.current.has(mesh)) {
-            sceneRef.current.remove(mesh);
-            mesh.geometry.dispose();
-            if (mesh.material instanceof THREE.Material) {
-                mesh.material.dispose();
-            }
-            meshSetRef.current.delete(mesh);
-        }
+        sceneRef.current.remove(mesh.parent);
+        sceneRef.current.remove(mesh);
+
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+
+        mesh.parent.material.dispose();
+        mesh.parent.geometry.dispose();
     }, [sceneRef]);
 
     return {
         createSkinnedMesh,
         addSkinnedMesh,
         delSkinnedMesh,
-        meshSetRef,
         menuContext,
         setMenuContext,
     };
 }
-
-// export function useSceneMenu(sceneRef: RefObject<THREE.Scene>): SceneMenuHooks {
-//     const [menuContext, setMenuContext] = useState<SceneMenuContext | null>(null);
-
-//     return {
-//         menuContext,
-//         setMenuContext,
-//     };
-// }
-
-// export function createScene() : RefObject<HTMLDivElement> {
-//     const containerRef = useRef<HTMLDivElement>(null);
-
-//     useEffect(() => {
-//         const viewSpaceRefs = useViewSpace(containerRef);
-//     }, []);
-//     return containerRef;
-// }

@@ -59,12 +59,6 @@ export default function Scene({
             if (viewSpaceRefs.controlsRef.current) {
                 viewSpaceRefs.controlsRef.current.enabled = !event.value;
             }
-            if (selectedMeshRef.current) {
-                const anchor = transformControlRef.current.object;
-                selectedMeshRef.current.position.copy(anchor.position);
-                selectedMeshRef.current.quaternion.copy(anchor.quaternion);
-                selectedMeshRef.current.scale.copy(anchor.scale);
-            }
         });
         const handleKeyDown = (event: KeyboardEvent) => {
             if (!transformControlRef.current) return;
@@ -115,15 +109,23 @@ export default function Scene({
             const raycaster = new THREE.Raycaster();
             raycaster.setFromCamera(mouse, camera);
 
-            const intersects = raycaster.intersectObjects(scene.children.filter(obj => obj instanceof THREE.SkinnedMesh));
+            // Collect all skinned meshes from the scene (they're nested inside bounding box containers)
+            const skinnedMeshes: THREE.SkinnedMesh[] = [];
+            scene.traverse((object) => {
+                if (object instanceof THREE.SkinnedMesh) {
+                    skinnedMeshes.push(object);
+                }
+            });
+
+            // Raycast only against skinned meshes to avoid hitting objects with undefined matrixWorld
+            const intersects = raycaster.intersectObjects(skinnedMeshes, false);
 
             if (intersects.length > 0 && transformControlRef.current) {
-                const skinnedMesh = intersects[0].object as THREE.SkinnedMesh;
+                const skinnedMesh = intersects[0].object;
+                const bbox = skinnedMesh.parent;
                 
                 if (event.button === 0) {
-                    console.log('handleClick');
-                    console.log(skinnedMesh);
-                    transformControlRef.current.attach(skinnedMesh.skeleton.bones[0]);
+                    transformControlRef.current.attach(bbox);
                     selectedMeshRef.current = skinnedMesh;
                     menuPositionRef.current = null;
                 } else if (event.button === 2) {
