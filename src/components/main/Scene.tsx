@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { useViewSpace, ViewSpaceReturn } from '@/hooks/useViewSpace';
 import { SceneMenuContext } from '@/hooks/useScene';
 import SceneMenu from './SceneMenu';
@@ -29,65 +29,92 @@ export default function Scene({
     const containerRef = useRef<HTMLDivElement>(null);
     const viewSpaceRefs = useViewSpace(containerRef);
     const transformControlRef = useRef<TransformControls | null>(null);
-    const selectedMeshRef = useRef<THREE.SkinnedMesh | null>(null);
     const menuContextRef = useRef<SceneMenuContext>({
         selectedMeshes: [],
         selectedAction: null
     });
-    const menuPositionRef = useRef<{ x: number; y: number } | null>(null);
+    const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
 
-    // Initialize TransformControls
     useEffect(() => {
-        const scene = viewSpaceRefs.sceneRef.current;
-        const camera = viewSpaceRefs.cameraRef.current;
+        const container = containerRef.current;
         const renderer = viewSpaceRefs.rendererRef.current;
-
-        if (!scene || !camera || !renderer) return;
-
-        const transformControl = new TransformControls(camera, renderer.domElement);
-        transformControl.setMode('translate');
-        transformControl.setSpace('world');
+        const camera = viewSpaceRefs.cameraRef.current;
+        const scene = viewSpaceRefs.sceneRef.current;
         
-        if (typeof transformControl.getHelper === 'function') {
-            const helper = transformControl.getHelper();
-            scene.add(helper);
-        } else {
-            scene.add(transformControl as THREE.Object3D);
-        }
+        if (!container || !renderer || !camera || !scene)
+            return;
 
-        transformControl.addEventListener('dragging-changed', (event) => {
-            if (viewSpaceRefs.controlsRef.current) {
-                viewSpaceRefs.controlsRef.current.enabled = !event.value;
+        const resizeObserver = new ResizeObserver(() => {
+            const width = container.clientWidth || 800;
+            const height = container.clientHeight || 600;
+            
+            if (width > 0 && height > 0) {
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+                renderer.setSize(width, height);
             }
         });
+        resizeObserver.observe(container);
+
+        const checkAndResize = () => {
+            const width = container.clientWidth || 800;
+            const height = container.clientHeight || 600;
+            if (width > 0 && height > 0) {
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+                renderer.setSize(width, height);
+            }
+        };
+
+        checkAndResize();
+        const timeoutId = setTimeout(checkAndResize, 100);
+
+        if (style?.display !== 'none') {
+            const transformControl = new TransformControls(camera, renderer.domElement);
+            transformControl.setMode('translate');
+            transformControl.setSpace('world');
+            scene.add(transformControl.getHelper());
+
+            transformControl.addEventListener('dragging-changed', (event) => {
+                if (viewSpaceRefs.controlsRef.current) {
+                    viewSpaceRefs.controlsRef.current.enabled = !event.value;
+                }
+            });
+            
+            transformControlRef.current = transformControl;
+            menuContextRef.current.selectedMeshes = [];
+            menuContextRef.current.selectedAction = null;
+            setMenuPosition(null);
+        }
         const handleKeyDown = (event: KeyboardEvent) => {
             if (!transformControlRef.current) return;
             switch (event.key.toLowerCase()) {
                 case 'g':
-                    transformControl.setMode('translate');
+                    transformControlRef.current.setMode('translate');
                     break;
                 case 'r':
-                    transformControl.setMode('rotate');
+                    transformControlRef.current.setMode('rotate');
                     break;
                 case 's':
-                    transformControl.setMode('scale');
+                    transformControlRef.current.setMode('scale');
                     break;
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
-        transformControlRef.current = transformControl;
 
         return () => {
+            resizeObserver.disconnect();
+            clearTimeout(timeoutId);
             window.removeEventListener('keydown', handleKeyDown);
             if (transformControlRef.current) {
+                scene.remove(transformControlRef.current.getHelper());
                 transformControlRef.current.dispose();
                 transformControlRef.current = null;
             }
         };
-    }, [viewSpaceRefs]);
-
-    // Notify parent when scene is ready
+    }, [viewSpaceRefs, style?.display]);
+    
     useEffect(() => {
         if (onSceneReady && viewSpaceRefs.sceneRef.current) {
             onSceneReady(viewSpaceRefs);
@@ -126,24 +153,24 @@ export default function Scene({
                 
                 if (event.button === 0) {
                     transformControlRef.current.attach(bbox);
-                    selectedMeshRef.current = skinnedMesh;
-                    menuPositionRef.current = null;
+                    menuContextRef.current.selectedMeshes = [];
+                    menuContextRef.current.selectedAction = null;
+                    setMenuPosition(null);
                 } else if (event.button === 2) {
                     event.preventDefault();
                     menuContextRef.current.selectedMeshes.push(skinnedMesh);
-                    menuPositionRef.current = {
+                    setMenuPosition({
                         x: event.clientX,
                         y: event.clientY
-                    };
+                    });
                 }
             } else {
-                if (event.button === 0) {
-                    if (transformControlRef.current) {
-                        transformControlRef.current.detach();
-                        selectedMeshRef.current = null;
-                    }
-                }
-                menuPositionRef.current = null;
+                if (transformControlRef.current)
+                    transformControlRef.current.detach();
+
+                menuContextRef.current.selectedMeshes = [];
+                menuContextRef.current.selectedAction = null;
+                setMenuPosition(null);
             }
         };
 
@@ -167,7 +194,7 @@ export default function Scene({
             <SceneMenu 
                 menuContextRef={menuContextRef}
                 setMenuContext={setMenuContext}
-                position={menuPositionRef.current}
+                position={menuPosition}
             />
         </>
     );
