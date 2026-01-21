@@ -82,7 +82,7 @@ class MeshGen {
         centroid.y /= this.polygon.length;
         
         this.polygon = this.polygon.map(p => p.minus(centroid));
-        this.polygon = reparameterize(this.polygon, this.isodistance);
+        this.polygon = reparameterize(this.polygon, 2*this.isodistance);
         this.triangulation = new (Mesh as any)();
         this.triangulation.build({
             v: this.polygon.map(p => new Vector(p.x, p.y, 0)),

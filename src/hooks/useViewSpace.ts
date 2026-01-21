@@ -2,13 +2,14 @@
 
 import { useRef, useEffect, RefObject } from 'react';
 import * as THREE from 'three';
-import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
+import { OrbitControls } from "three/addons/controls/OrbitControls.js"
+import { ViewportGizmo } from "three-viewport-gizmo"
 
 export interface ViewSpaceReturn {
     sceneRef: RefObject<THREE.Scene>;
     cameraRef: RefObject<THREE.PerspectiveCamera>;
     rendererRef: RefObject<THREE.WebGLRenderer>;
-    controlsRef: RefObject<TrackballControls>;
+    controlsRef: RefObject<OrbitControls>;
 }
 
 // Default configuration constants
@@ -61,7 +62,7 @@ export function useViewSpace(
     const sceneRef = useRef<THREE.Scene | null>(null);
     const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
     const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-    const controlsRef = useRef<TrackballControls | null>(null);
+    const controlsRef = useRef<OrbitControls | null>(null);
     const animationFrameIdRef = useRef<number | null>(null);
 
      // Initialize the 3D view space
@@ -78,6 +79,22 @@ export function useViewSpace(
         });
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(DEFAULT_BACKGROUND_COLOR);
+        
+        const gridHelper = new THREE.GridHelper(1000, 100, 0x444444, 0x222222);
+        scene.add(gridHelper);
+        
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(50, 50, 50);
+        directionalLight.castShadow = true;
+        scene.add(directionalLight);
+        
+        const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
+        directionalLight2.position.set(-50, 30, -50);
+        scene.add(directionalLight2);
+        
         sceneRef.current = scene;
 
         // Get container dimensions
@@ -103,20 +120,30 @@ export function useViewSpace(
         container.appendChild(renderer.domElement);
         rendererRef.current = renderer;
 
-        const controls = new TrackballControls(camera, renderer.domElement);
+        const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
         controlsRef.current = controls;
+        
+        const gizmo = new ViewportGizmo(camera, renderer, {
+            placement: 'top-left',
+            offset: {
+                left: 20,
+                top: 20
+            }
+        });
+        gizmo.attachControls(controls);
 
         const render = () => {
             const currentScene = sceneRef.current;
             const currentCamera = cameraRef.current;
             const currentRenderer = rendererRef.current;
             const currentControls = controlsRef.current;
-
+            
             if (currentScene && currentCamera && currentRenderer && currentControls) {
                 currentControls.update();
                 currentRenderer.render(currentScene, currentCamera);
+                gizmo.render();
             }
         };
         const animate = () => {
@@ -134,6 +161,7 @@ export function useViewSpace(
             cameraRef.current.aspect = newWidth / newHeight;
             cameraRef.current.updateProjectionMatrix();
             rendererRef.current.setSize(newWidth, newHeight);
+            gizmo.update();
         };
         window.addEventListener('resize', handleResize);
 
@@ -154,6 +182,7 @@ export function useViewSpace(
                 controlsRef.current.dispose();
                 controlsRef.current = null;
             }
+            gizmo.dispose();
         };
     }, [containerRef]);
 

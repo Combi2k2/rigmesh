@@ -3,8 +3,3 @@ export { default as MeshGenController } from './MeshGenController';
 export { default as MeshGenOverlay } from './MeshGenOverlay';
 export { useMeshGen } from '@/hooks/meshgen';
 export type { MeshGenState, MeshGenParams } from '@/hooks/meshgen';
-export { default as Step1 } from './Step1';
-export { default as Step2 } from './Step2';
-export { default as Step3 } from './Step3';
-export { default as Step4 } from './Step4';
-export { default as Step5 } from './Step5';

@@ -35,20 +35,16 @@ export default function MeshGenUI({
 }: MeshGenUIProps) {
     return (
         <div className="w-full h-screen overflow-hidden flex border border-gray-300 dark:border-gray-700">
-            <div className="w-2/3 border-r border-gray-300 dark:border-gray-700 relative">
-                <MeshGenOverlay state={state} />
-            </div>
-            <div className="w-1/3 flex flex-col bg-gray-50 dark:bg-gray-900">
-                <MeshGenController
-                    currentStep={state.currentStep}
-                    totalSteps={5}
-                    params={params}
-                    onParamChange={onParamChange}
-                    onNext={onNext}
-                    onBack={onBack}
-                    onCancel={onCancel}
-                />
-            </div>
+            <MeshGenOverlay state={state} />
+            <MeshGenController
+                currentStep={state.currentStep}
+                totalSteps={5}
+                params={params}
+                onParamChange={onParamChange}
+                onNext={onNext}
+                onBack={onBack}
+                onCancel={onCancel}
+            />
         </div>
     );
 }
