@@ -86,11 +86,7 @@ export function useScene(sceneRef: RefObject<THREE.Scene>): SceneHooks {
             );
         });
         bonesArray[0].position.set(joints[0].x, joints[0].y, joints[0].z);
-        bonesArray[0].updateMatrixWorld();
-        bonesArray.forEach(bone => {
-            skinnedMesh.add(bone);
-            bone.updateMatrix();
-        });
+        bonesArray.forEach(bone => {skinnedMesh.add(bone);});
 
         skinnedMesh.bind(new THREE.Skeleton(bonesArray));
 
@@ -114,16 +110,12 @@ export function useScene(sceneRef: RefObject<THREE.Scene>): SceneHooks {
             ),
             new THREE.MeshBasicMaterial({ visible: false })
         );
-        box.position.copy(center);
         mesh.position.sub(center);
-
-        // Initialize box matrices before adding mesh
-        box.updateMatrix();
-        box.updateMatrixWorld(true);
-
+        box.position.set(0, 0, 0);
         box.add(mesh);
 
         sceneRef.current.add(box);
+        sceneRef.current.updateMatrixWorld(true);
     }, [sceneRef]);
 
     const delSkinnedMesh = useCallback((mesh: THREE.SkinnedMesh) => {
