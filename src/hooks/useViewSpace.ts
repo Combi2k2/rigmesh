@@ -60,6 +60,7 @@ export function useViewSpace(
     containerRef: RefObject<HTMLDivElement>
 ): ViewSpaceReturn {
     const sceneRef = useRef<THREE.Scene | null>(null);
+    const gizmoRef = useRef<ViewportGizmo | null>(null);
     const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
     const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
     const controlsRef = useRef<OrbitControls | null>(null);
@@ -125,25 +126,26 @@ export function useViewSpace(
         controls.dampingFactor = 0.05;
         controlsRef.current = controls;
         
-        const gizmo = new ViewportGizmo(camera, renderer, {
+        gizmoRef.current = new ViewportGizmo(camera, renderer, {
             placement: 'top-left',
             offset: {
                 left: 20,
                 top: 20
             }
         });
-        gizmo.attachControls(controls);
+        gizmoRef.current.attachControls(controls);
 
         const render = () => {
             const currentScene = sceneRef.current;
             const currentCamera = cameraRef.current;
             const currentRenderer = rendererRef.current;
             const currentControls = controlsRef.current;
+            const currentGizmo = gizmoRef.current;
             
-            if (currentScene && currentCamera && currentRenderer && currentControls) {
+            if (currentScene && currentCamera && currentRenderer && currentControls && currentGizmo) {
                 currentControls.update();
                 currentRenderer.render(currentScene, currentCamera);
-                gizmo.render();
+                currentGizmo.render();
             }
         };
         const animate = () => {
@@ -161,7 +163,7 @@ export function useViewSpace(
             cameraRef.current.aspect = newWidth / newHeight;
             cameraRef.current.updateProjectionMatrix();
             rendererRef.current.setSize(newWidth, newHeight);
-            gizmo.update();
+            gizmoRef.current.update();
         };
         window.addEventListener('resize', handleResize);
 
@@ -182,7 +184,7 @@ export function useViewSpace(
                 controlsRef.current.dispose();
                 controlsRef.current = null;
             }
-            gizmo.dispose();
+            gizmoRef.current.dispose();
         };
     }, [containerRef]);
 
