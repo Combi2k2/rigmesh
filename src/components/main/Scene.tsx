@@ -1,15 +1,15 @@
 'use client';
 
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import { useViewSpace, ViewSpaceReturn } from '@/hooks/useViewSpace';
-import { SceneMenuContext } from '@/hooks/useScene';
-import SceneMenu from './SceneMenu';
+import { MenuAction } from '@/hooks/useScene';
+import SceneMenu, { MenuPosition } from './SceneMenu';
 import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 
 export interface SceneProps {
     onSceneReady?: (refs: ViewSpaceReturn) => void;
-    setMenuContext?: (context: SceneMenuContext | null) => void;
+    onMenuAction?: (action: MenuAction, meshes: THREE.SkinnedMesh[]) => void;
     className?: string;
     style?: React.CSSProperties;
 }
@@ -18,23 +18,25 @@ export interface SceneProps {
  * Main 3D Scene component for the main viewport
  * 
  * Uses the useViewSpace hook to initialize a 3D scene with camera, renderer, and controls.
- * Renders skinned meshes and handles click events for transformation.
+ * Renders skinned meshes and handles click events for transformation and context menus.
  */
 export default function Scene({
     onSceneReady, 
-    setMenuContext,
+    onMenuAction,
     className = 'w-full h-full',
     style
 }: SceneProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewSpaceRefs = useViewSpace(containerRef);
     const transformControlRef = useRef<TransformControls | null>(null);
-    const menuContextRef = useRef<SceneMenuContext>({
-        selectedMeshes: [],
-        selectedAction: null
-    });
-    const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+    
+    // Menu state
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
+    const [selectedMeshes, setSelectedMeshes] = useState<THREE.SkinnedMesh[]>([]);
+    const [mergeTargetMesh, setMergeTargetMesh] = useState<THREE.SkinnedMesh | null>(null);
 
+    // Initialize transform controls and setup
     useEffect(() => {
         const container = containerRef.current;
         const renderer = viewSpaceRefs.rendererRef.current;
@@ -82,10 +84,8 @@ export default function Scene({
             });
             
             transformControlRef.current = transformControl;
-            menuContextRef.current.selectedMeshes = [];
-            menuContextRef.current.selectedAction = null;
-            setMenuPosition(null);
         }
+
         const handleKeyDown = (event: KeyboardEvent) => {
             if (!transformControlRef.current) return;
             switch (event.key.toLowerCase()) {
@@ -121,80 +121,157 @@ export default function Scene({
         }
     }, [onSceneReady, viewSpaceRefs]);
 
+    // Helper function to get all skinned meshes from scene
+    const getSkinnedMeshes = useCallback((scene: THREE.Scene): THREE.SkinnedMesh[] => {
+        const meshes: THREE.SkinnedMesh[] = [];
+        scene.traverse((object) => {
+            if (object instanceof THREE.SkinnedMesh) {
+                meshes.push(object);
+            }
+        });
+        return meshes;
+    }, []);
+
+    // Helper function to convert screen coordinates to normalized device coordinates
+    const screenToNDC = useCallback((clientX: number, clientY: number, rect: DOMRect) => {
+        return new THREE.Vector2(
+            ((clientX - rect.left) / rect.width) * 2 - 1,
+            -((clientY - rect.top) / rect.height) * 2 + 1
+        );
+    }, []);
+
+    // Helper function to raycast and find intersected mesh
+    const raycastMesh = useCallback((
+        mouse: THREE.Vector2,
+        camera: THREE.Camera,
+        scene: THREE.Scene
+    ): THREE.SkinnedMesh | null => {
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, camera);
+
+        const skinnedMeshes = getSkinnedMeshes(scene);
+        const intersects = raycaster.intersectObjects(skinnedMeshes, false);
+
+        if (intersects.length > 0) {
+            return intersects[0].object as THREE.SkinnedMesh;
+        }
+        return null;
+    }, [getSkinnedMeshes]);
+
+    // Handle left click for transform controls
     useEffect(() => {
         const scene = viewSpaceRefs.sceneRef.current;
         const camera = viewSpaceRefs.cameraRef.current;
         const renderer = viewSpaceRefs.rendererRef.current;
         if (!scene || !camera || !renderer) return;
 
-        const handleClick = (event: MouseEvent) => {
-            const mouse = new THREE.Vector2();
+        const handleLeftClick = (event: MouseEvent) => {
+            if (event.button !== 0) return;
+
+            // Close menu on left click
+            setIsMenuOpen(false);
+            setMenuPosition(null);
+
+            if (!transformControlRef.current) return;
+
             const rect = renderer.domElement.getBoundingClientRect();
-            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            const mouse = screenToNDC(event.clientX, event.clientY, rect);
+            const skinnedMesh = raycastMesh(mouse, camera, scene);
 
-            const raycaster = new THREE.Raycaster();
-            raycaster.setFromCamera(mouse, camera);
-
-            // Collect all skinned meshes from the scene (they're nested inside bounding box containers)
-            const skinnedMeshes: THREE.SkinnedMesh[] = [];
-            scene.traverse((object) => {
-                if (object instanceof THREE.SkinnedMesh) {
-                    skinnedMeshes.push(object);
-                }
-            });
-
-            // Raycast only against skinned meshes to avoid hitting objects with undefined matrixWorld
-            const intersects = raycaster.intersectObjects(skinnedMeshes, false);
-
-            if (intersects.length > 0 && transformControlRef.current) {
-                const skinnedMesh = intersects[0].object;
-                const bbox = skinnedMesh.parent;
-                
-                if (event.button === 0) {
-                    transformControlRef.current.attach(bbox);
-                    menuContextRef.current.selectedMeshes = [];
-                    menuContextRef.current.selectedAction = null;
-                    setMenuPosition(null);
-                } else if (event.button === 2) {
-                    event.preventDefault();
-                    menuContextRef.current.selectedMeshes.push(skinnedMesh);
-                    setMenuPosition({
-                        x: event.clientX,
-                        y: event.clientY
-                    });
-                }
+            if (skinnedMesh && skinnedMesh.parent) {
+                transformControlRef.current.attach(skinnedMesh.parent);
             } else {
-                if (transformControlRef.current)
-                    transformControlRef.current.detach();
-
-                menuContextRef.current.selectedMeshes = [];
-                menuContextRef.current.selectedAction = null;
-                setMenuPosition(null);
+                transformControlRef.current.detach();
             }
         };
 
+        const canvas = renderer.domElement;
+        canvas.addEventListener('mousedown', handleLeftClick);
+
+        return () => {
+            canvas.removeEventListener('mousedown', handleLeftClick);
+        };
+    }, [viewSpaceRefs, screenToNDC, raycastMesh]);
+
+    // Handle right click for context menu
+    useEffect(() => {
+        const scene = viewSpaceRefs.sceneRef.current;
+        const camera = viewSpaceRefs.cameraRef.current;
+        const renderer = viewSpaceRefs.rendererRef.current;
+        if (!scene || !camera || !renderer) return;
+
         const handleContextMenu = (event: MouseEvent) => {
             event.preventDefault();
+            event.stopPropagation();
+
+            const rect = renderer.domElement.getBoundingClientRect();
+            const mouse = screenToNDC(event.clientX, event.clientY, rect);
+            const skinnedMesh = raycastMesh(mouse, camera, scene);
+
+            if (skinnedMesh) {
+                // Set selected mesh and open menu
+                setSelectedMeshes([skinnedMesh]);
+                setMenuPosition({
+                    x: event.clientX,
+                    y: event.clientY
+                });
+                setIsMenuOpen(true);
+            } else {
+                // Clicked on empty space, close menu
+                setIsMenuOpen(false);
+                setMenuPosition(null);
+                setSelectedMeshes([]);
+            }
         };
 
-        const canvas = viewSpaceRefs.rendererRef.current.domElement;
-        canvas.addEventListener('mousedown', handleClick);
+        const canvas = renderer.domElement;
         canvas.addEventListener('contextmenu', handleContextMenu);
 
         return () => {
-            canvas.removeEventListener('mousedown', handleClick);
             canvas.removeEventListener('contextmenu', handleContextMenu);
         };
-    }, [viewSpaceRefs]);
+    }, [viewSpaceRefs, screenToNDC, raycastMesh]);
+
+    // Handle menu actions
+    const handleMenuAction = useCallback((action: MenuAction, meshes: THREE.SkinnedMesh[]) => {
+        if (onMenuAction) {
+            onMenuAction(action, meshes);
+        }
+
+        // Clear merge target for non-merge actions
+        if (action !== 'merge') {
+            setMergeTargetMesh(null);
+        } else {
+            // Merge action - clear target after merge
+            setMergeTargetMesh(null);
+        }
+    }, [onMenuAction]);
+
+    // Handle selecting mesh for merge
+    const handleSelectForMerge = useCallback((meshes: THREE.SkinnedMesh[]) => {
+        if (meshes.length > 0) {
+            setMergeTargetMesh(meshes[0]);
+        }
+    }, []);
+
+    // Handle menu close
+    const handleMenuClose = useCallback(() => {
+        setIsMenuOpen(false);
+        setMenuPosition(null);
+        // Don't clear selectedMeshes here - they might be needed for actions
+    }, []);
 
     return (
         <>
             <div ref={containerRef} className={className} style={style} />
             <SceneMenu 
-                menuContextRef={menuContextRef}
-                setMenuContext={setMenuContext}
+                isOpen={isMenuOpen}
                 position={menuPosition}
+                selectedMeshes={selectedMeshes}
+                hasMergeTarget={mergeTargetMesh !== null}
+                onAction={handleMenuAction}
+                onSelectForMerge={handleSelectForMerge}
+                onClose={handleMenuClose}
             />
         </>
     );
