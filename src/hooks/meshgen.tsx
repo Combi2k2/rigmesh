@@ -31,7 +31,7 @@ export interface MeshGenParams {
 
 export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void) {
     const [latestPath, setLatestPath] = useState<Vec2[] | null>(null);
-    const [currentStep, setCurrentStep] = useState<number>(1);
+    const [currentStep, setCurrentStep] = useState<number>(0);
     
     const [isodistance, setIsodistance] = useState<number>(10);
     const [branchMinLength, setBranchMinLength] = useState<number>(5);
@@ -145,7 +145,7 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
     }, []);
 
     const handleReset = useCallback(() => {
-        setCurrentStep(1);
+        setCurrentStep(0);
         setLatestPath(null);
         setMesh2D(null);
         setMesh3D(null);
@@ -180,14 +180,7 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
     useEffect(() => {
         if (currentStep > 5 && mesh3D && onMeshComplete) {
             onMeshComplete(mesh3D);
-            setCurrentStep(1);
-            setLatestPath(null);
-            setMesh2D(null);
-            setMesh3D(null);
-            setChordData(null);
-            setInit3(false);
-            setInit4(false);
-            setSkeleton(null);
+            handleReset();
         }
     }, [currentStep, mesh3D, onMeshComplete]);
 
