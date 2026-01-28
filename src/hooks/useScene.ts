@@ -29,6 +29,7 @@ export interface SceneHooks {
  */
 export function useScene(sceneRef: RefObject<THREE.Scene>): SceneHooks {
     const [menuContext, setMenuContext] = useState<SceneMenuContext | null>(null);
+    const mesh2Helper = useRef<Map<THREE.SkinnedMesh, THREE.SkeletonHelper> | null>(new Map());
 
     const createSkinnedMesh = useCallback((
         mesh: MeshData,
@@ -68,26 +69,33 @@ export function useScene(sceneRef: RefObject<THREE.Scene>): SceneHooks {
         const skinnedMesh = new THREE.SkinnedMesh(geometry, new THREE.MeshStandardMaterial({
             color: 0xffffff,
             skinning: true,
-            side: THREE.DoubleSide
+            side: THREE.DoubleSide,
         }));
-
+        const n = skel[0].length;
         const bonesArray: THREE.Bone[] = [];
         const joints = skel[0];
-
+        const adjList = new Array(n).fill(0).map(() => new Array<number>());
         skel[0].forEach(_ => bonesArray.push(new THREE.Bone()));
         skel[1].forEach(([x, y]) => {
-            if (x > y) [x, y] = [y, x];
-
-            bonesArray[x].add(bonesArray[y]);
-            bonesArray[y].position.set(
-                joints[y].x - joints[x].x,
-                joints[y].y - joints[x].y,
-                joints[y].z - joints[x].z
-            );
+            adjList[x].push(y);
+            adjList[y].push(x);
         });
+        let stack = [[0, -1]];
+        while (stack.length > 0) {
+            let [u, p] = stack.pop();
+            for (let v of adjList[u])
+                if (v !== p) {
+                    stack.push([v, u]);
+                    bonesArray[u].add(bonesArray[v]);
+                    bonesArray[v].position.set(
+                        joints[v].x - joints[u].x,
+                        joints[v].y - joints[u].y,
+                        joints[v].z - joints[u].z
+                    );
+                }
+        }
         bonesArray[0].position.set(joints[0].x, joints[0].y, joints[0].z);
-        bonesArray.forEach(bone => {skinnedMesh.add(bone);});
-
+        skinnedMesh.add(bonesArray[0]);
         skinnedMesh.bind(new THREE.Skeleton(bonesArray));
 
         return skinnedMesh;
@@ -95,40 +103,52 @@ export function useScene(sceneRef: RefObject<THREE.Scene>): SceneHooks {
 
     const addSkinnedMesh = useCallback((mesh: THREE.SkinnedMesh) => {
         if (!sceneRef.current) return;
-        
-        mesh.geometry.computeBoundingBox();
-        const boundingBox = mesh.geometry.boundingBox;
-        
-        const center = new THREE.Vector3();
-        boundingBox.getCenter(center);
 
-        const box = new THREE.Mesh(
-            new THREE.BoxGeometry(
-                boundingBox.max.x - boundingBox.min.x,
-                boundingBox.max.y - boundingBox.min.y,
-                boundingBox.max.z - boundingBox.min.z
-            ),
-            new THREE.MeshBasicMaterial({ visible: false })
-        );
-        mesh.position.sub(center);
-        box.position.set(0, 0, 0);
-        box.add(mesh);
-
-        sceneRef.current.add(box);
+        mesh.skeleton.bones.forEach(bone => {
+            const sphere = new THREE.Mesh(
+                new THREE.SphereGeometry(5, 16, 16),
+                new THREE.MeshBasicMaterial({
+                    color: 0x00ff00,
+                    transparent: true,
+                    opacity: 0.8,
+                    depthTest: false,
+                    depthWrite: false
+                })
+            );
+            bone.add(sphere);
+            sphere.position.set(0, 0, 0);
+            sphere.renderOrder = 1000;
+        });
+        const helper = new THREE.SkeletonHelper(mesh);
+        helper.material = new THREE.LineBasicMaterial({
+            color: 0x0000ff,
+            depthTest: false,
+            depthWrite: false
+        });
+        helper.renderOrder = 1000;
+        mesh2Helper.current.set(mesh, helper);
+        sceneRef.current.add(mesh);
+        sceneRef.current.add(helper);
         sceneRef.current.updateMatrixWorld(true);
     }, [sceneRef]);
 
     const delSkinnedMesh = useCallback((mesh: THREE.SkinnedMesh) => {
         if (!sceneRef.current) return;
-        
-        sceneRef.current.remove(mesh.parent);
-        sceneRef.current.remove(mesh);
 
+        mesh.skeleton.bones.forEach((bone) => {
+            const sphere = bone.children.find((c) => c instanceof THREE.Mesh);
+            sceneRef.current.remove(sphere);
+            sphere.geometry.dispose();
+            sphere.material.dispose();
+        });
+        const helper = mesh2Helper.current.get(mesh);
+        sceneRef.current.remove(helper);
+        helper.geometry.dispose();
+        helper.material.dispose();
+
+        sceneRef.current.remove(mesh);
         mesh.geometry.dispose();
         mesh.material.dispose();
-
-        mesh.parent.material.dispose();
-        mesh.parent.geometry.dispose();
     }, [sceneRef]);
 
     return {

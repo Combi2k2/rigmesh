@@ -179,7 +179,7 @@ export default function Scene({
             const skinnedMesh = raycastMesh(mouse, camera, scene);
 
             if (skinnedMesh && skinnedMesh.parent) {
-                transformControlRef.current.attach(skinnedMesh.parent);
+                transformControlRef.current.attach(skinnedMesh);
             } else {
                 transformControlRef.current.detach();
             }
