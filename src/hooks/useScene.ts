@@ -145,6 +145,7 @@ export function useScene(sceneRef: RefObject<THREE.Scene>): SceneHooks {
         sceneRef.current.remove(helper);
         helper.geometry.dispose();
         helper.material.dispose();
+        mesh2Helper.current.delete(mesh);
 
         sceneRef.current.remove(mesh);
         mesh.geometry.dispose();

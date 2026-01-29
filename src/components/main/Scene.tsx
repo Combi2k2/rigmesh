@@ -121,17 +121,6 @@ export default function Scene({
         }
     }, [onSceneReady, viewSpaceRefs]);
 
-    // Helper function to get all skinned meshes from scene
-    const getSkinnedMeshes = useCallback((scene: THREE.Scene): THREE.SkinnedMesh[] => {
-        const meshes: THREE.SkinnedMesh[] = [];
-        scene.traverse((object) => {
-            if (object instanceof THREE.SkinnedMesh) {
-                meshes.push(object);
-            }
-        });
-        return meshes;
-    }, []);
-
     // Helper function to convert screen coordinates to normalized device coordinates
     const screenToNDC = useCallback((clientX: number, clientY: number, rect: DOMRect) => {
         return new THREE.Vector2(
@@ -140,8 +129,7 @@ export default function Scene({
         );
     }, []);
 
-    // Helper function to raycast and find intersected mesh
-    const raycastMesh = useCallback((
+    const raycast = useCallback((
         mouse: THREE.Vector2,
         camera: THREE.Camera,
         scene: THREE.Scene
@@ -149,14 +137,18 @@ export default function Scene({
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mouse, camera);
 
-        const skinnedMeshes = getSkinnedMeshes(scene);
-        const intersects = raycaster.intersectObjects(skinnedMeshes, false);
+        const meshes = scene.children.filter((child) => child instanceof THREE.SkinnedMesh) as THREE.SkinnedMesh[];
+        const mesh = raycaster.intersectObjects(meshes, false)[0]?.object as THREE.SkinnedMesh | undefined;
 
-        if (intersects.length > 0) {
-            return intersects[0].object as THREE.SkinnedMesh;
+        if (mesh) {
+            let bones = mesh.skeleton.bones.map((bone) => bone.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh);
+            let bone = raycaster.intersectObjects(bones, false)[0]?.object as THREE.Mesh | undefined;
+
+            return [mesh, bone?.parent as THREE.Bone | undefined];
+        } else {
+            return [null, null];
         }
-        return null;
-    }, [getSkinnedMeshes]);
+    }, []);
 
     // Handle left click for transform controls
     useEffect(() => {
@@ -175,13 +167,63 @@ export default function Scene({
             if (!transformControlRef.current) return;
 
             const rect = renderer.domElement.getBoundingClientRect();
-            const mouse = screenToNDC(event.clientX, event.clientY, rect);
-            const skinnedMesh = raycastMesh(mouse, camera, scene);
+            const mouse = new THREE.Vector2(
+                ((event.clientX - rect.left) / rect.width) * 2 - 1,
+                -((event.clientY - rect.top) / rect.height) * 2 + 1
+            );
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+            const meshes = scene.children.filter((child) => child instanceof THREE.SkinnedMesh) as THREE.SkinnedMesh[];
+            const mesh = raycaster.intersectObjects(meshes, false)[0]?.object as THREE.SkinnedMesh | undefined;
 
-            if (skinnedMesh && skinnedMesh.parent) {
-                transformControlRef.current.attach(skinnedMesh);
+            if (mesh) {
+                let bones = mesh.skeleton.bones.map((bone) => bone.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh);
+                let bone = raycaster.intersectObjects(bones, false)[0]?.object as THREE.Mesh | undefined;
+            
+                if (bone) {
+                    bone = bone.parent as THREE.Bone;
+                    transformControlRef.current.setSpace('local');
+                    transformControlRef.current.attach(bone);
+
+                    const boneIndex = mesh.skeleton.bones.indexOf(bone);
+                    const skinIndices = mesh.geometry.getAttribute('skinIndex') as THREE.BufferAttribute;
+                    const skinWeights = mesh.geometry.getAttribute('skinWeight') as THREE.BufferAttribute;
+
+                    const nV = skinIndices.count;
+                    const colors = new Float32Array(nV * 3);
+
+                    for (let i = 0; i < nV; i++) {
+                        let influence = 0;
+
+                        for (let j = 0; j < 4; j++) {
+                            const idx = skinIndices.getX(i * 4 + j);
+                            if (idx === boneIndex) {
+                                influence = skinWeights.getX(i * 4 + j);
+                                break;
+                            }
+                        }
+                        colors[i * 3 + 0] = influence;
+                        colors[i * 3 + 1] = 0;
+                        colors[i * 3 + 2] = 1 - influence;
+                    }
+                    mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+                    const mat = mesh.material as THREE.MeshStandardMaterial;
+                    mat.vertexColors = true;
+                    mat.needsUpdate = true;
+                } else {
+                    transformControlRef.current.setSpace('world');
+                    transformControlRef.current.attach(mesh);
+
+                    if (mesh.geometry.getAttribute('color'))
+                        mesh.geometry.deleteAttribute('color');
+                    
+                    mesh.material.vertexColors = false;
+                    mesh.material.needsUpdate = true;
+                }
             } else {
                 transformControlRef.current.detach();
+                setSelectedMeshes([]);
             }
         };
 
@@ -191,7 +233,7 @@ export default function Scene({
         return () => {
             canvas.removeEventListener('mousedown', handleLeftClick);
         };
-    }, [viewSpaceRefs, screenToNDC, raycastMesh]);
+    }, [viewSpaceRefs]);
 
     // Handle right click for context menu
     useEffect(() => {
@@ -206,11 +248,10 @@ export default function Scene({
 
             const rect = renderer.domElement.getBoundingClientRect();
             const mouse = screenToNDC(event.clientX, event.clientY, rect);
-            const skinnedMesh = raycastMesh(mouse, camera, scene);
+            const [mesh, bone] = raycast(mouse, camera, scene);
 
-            if (skinnedMesh) {
-                // Set selected mesh and open menu
-                setSelectedMeshes([skinnedMesh]);
+            if (mesh) {
+                setSelectedMeshes([mesh]);
                 setMenuPosition({
                     x: event.clientX,
                     y: event.clientY
@@ -230,7 +271,7 @@ export default function Scene({
         return () => {
             canvas.removeEventListener('contextmenu', handleContextMenu);
         };
-    }, [viewSpaceRefs, screenToNDC, raycastMesh]);
+    }, [viewSpaceRefs, screenToNDC, raycast]);
 
     // Handle menu actions
     const handleMenuAction = useCallback((action: MenuAction, meshes: THREE.SkinnedMesh[]) => {
