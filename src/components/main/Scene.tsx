@@ -196,9 +196,9 @@ export default function Scene({
                         let influence = 0;
 
                         for (let j = 0; j < 4; j++) {
-                            const idx = skinIndices.getX(i * 4 + j);
+                            const idx = skinIndices.getComponent(i, j);
                             if (idx === boneIndex) {
-                                influence = skinWeights.getX(i * 4 + j);
+                                influence = skinWeights.getComponent(i, j);
                                 break;
                             }
                         }
@@ -206,7 +206,7 @@ export default function Scene({
                         colors[i * 3 + 1] = 0;
                         colors[i * 3 + 2] = 1 - influence;
                     }
-                    mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                    mesh.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 
                     const mat = mesh.material as THREE.MeshStandardMaterial;
                     mat.vertexColors = true;
