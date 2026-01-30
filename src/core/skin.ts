@@ -31,7 +31,7 @@ export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number
 
     let closest_dist = new Array(nV).fill(Infinity);
     let closest_bone = new Array(nV).fill(-1);
-    let skin_weights = new Array(nV).fill([]);
+    let skin_weights = new Array(nV).fill(0).map(() => new Array(skel[0].length).fill(0));
 
     skel[1].forEach(([i0, i1], i) => {
         const v0 = skel[0][i0];
@@ -49,19 +49,18 @@ export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number
         });
     });
 
-    skel[1].forEach(([i0, i1], i) => {
+    skel[1].forEach(([i0, i1], idx) => {
         let fixed = new Array(nV).fill(true);
         let perm = new Array(nV).fill(0);
         let nFree = 0;
 
-        for (let j = 0; j < nV; j++) if (closest_bone[j] !== i) {
+        for (let j = 0; j < nV; j++) if (closest_bone[j] !== idx) {
             let [i2, i3] = skel[1][closest_bone[j]];
 
-            if (i2 === i0 || i2 === i1)  continue;
-            if (i3 === i0 || i3 === i1)  continue;
-
-            fixed[j] = false;
-            nFree++;
+            if (i2 === i0 || i2 === i1 || i3 === i0 || i3 === i1) {
+                fixed[j] = false;
+                nFree++;
+            }
         }
         let indexFree = 0;
         let indexBound = nFree;
@@ -81,7 +80,7 @@ export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number
                 let w = (cotan(h) + cotan(h.twin))/2;
 
                 if (fixed[k]) {
-                    sum += (closest_bone[k] === i ? w : 0);
+                    sum += (closest_bone[k] === idx ? 1 : 0) * w;
                 } else {
                     T.addEntry(-w, perm[j], perm[k]);
                     T.addEntry(w, perm[j], perm[j]);
@@ -93,8 +92,11 @@ export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number
         let w = A.chol().solvePositiveDefinite(B);
 
         for (let j = 0; j < nV; j++) {
-            if (fixed[j])   skin_weights[j].push(closest_bone[j] === i ? 1 : 0);
-            else            skin_weights[j].push(w.get(perm[j], 0));
+            let w_b = fixed[j] ? (closest_bone[j] === idx ? 1 : 0) : w.get(perm[j], 0);
+            if (w_b) {
+                skin_weights[j][i0] += w_b;
+                skin_weights[j][i1] += w_b;
+            }
         }
     });
     return skin_weights;
