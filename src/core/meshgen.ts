@@ -353,9 +353,9 @@ class MeshGen {
                 let p2 = g.node(c2);
                 let barycenter = p0.plus(p1).plus(p2).times(1/3);
                 g.setNode(vertIdx, barycenter);
-                g.setEdge(c0, vertIdx); g.setEdge(vertIdx, c0);
-                g.setEdge(c1, vertIdx); g.setEdge(vertIdx, c1);
-                g.setEdge(c2, vertIdx); g.setEdge(vertIdx, c2);
+                g.setEdge(c0, vertIdx, true);   g.setEdge(vertIdx, c0, true);
+                g.setEdge(c1, vertIdx, true);   g.setEdge(vertIdx, c1, true);
+                g.setEdge(c2, vertIdx, true);   g.setEdge(vertIdx, c2, true);
 
                 vertIdx++;
             }
