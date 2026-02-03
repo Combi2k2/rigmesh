@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { useViewSpace, ViewSpaceReturn } from '@/hooks/useViewSpace';
-import { MenuAction } from '@/hooks/useScene';
+import { MenuAction } from '@/interface';
 import SceneMenu, { MenuPosition } from './SceneMenu';
 import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';

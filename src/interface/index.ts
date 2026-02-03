@@ -16,3 +16,5 @@ export interface Plane {
     normal: Vec3;
     offset: number;
 };
+
+export type MenuAction = 'copy' | 'delete' | 'rig' | 'cut' | 'merge';
