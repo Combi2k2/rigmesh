@@ -1,11 +1,18 @@
-/**
- * Central export for all interfaces
- */
-
+import { Vec3 } from './point';
+import * as THREE from 'three';
 export * from './point';
-export * from './mesh';
-export * from './skeleton';
-export * from './common';
 
+export type MeshData = [Vec3[], number[][]];
+export type SkelData = [Vec3[] | THREE.Bone[], [number, number][]];
 
+export interface SkinnedMeshData {
+    mesh: MeshData;
+    skel: SkelData;
+    skinWeights: number[][];
+    skinIndices: number[][] | null;
+};
 
+export interface Plane {
+    normal: Vec3;
+    offset: number;
+};
