@@ -2,7 +2,7 @@
 
 import MeshGenController from './MeshGenController';
 import MeshGenOverlay from './MeshGenOverlay';
-import { MeshGenState, MeshGenParams } from '@/hooks/meshgen';
+import { MeshGenState, MeshGenParams } from '@/hooks/useMeshGen';
 
 interface MeshGenUIProps {
     state: MeshGenState;

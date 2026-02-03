@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useCallback, useEffect, useState } from 'react';
-import { useMeshGen } from '@/hooks/meshgen';
+import { useMeshGen } from '@/hooks/useMeshGen';
 import { useViewSpace, ViewSpaceReturn } from '@/hooks/useViewSpace';
 import { useViewSpaceMesh } from '@/hooks/useViewSpaceMesh';
 import MeshGenUI from '@/components/meshgenUI/MeshGenUI';

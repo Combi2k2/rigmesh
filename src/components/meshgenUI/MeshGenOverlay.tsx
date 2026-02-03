@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState } from 'react';
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
-import { MeshGenState } from '@/hooks/meshgen';
+import { MeshGenState } from '@/hooks/useMeshGen';
 import { Point } from '@/interface';
 import ViewSpace, { ViewSpaceReturn } from '@/components/ViewSpace';
 
