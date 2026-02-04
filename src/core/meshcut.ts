@@ -127,68 +127,53 @@ export function computeCutPlaneFromScreenLine(
 }
 
 export function runMeshCut(mesh: THREE.SkinnedMesh, plane: Plane, smoothFactor: number = 0.5): THREE.SkinnedMesh[] {
-    const geometry = mesh.geometry;
-    const skeleton = mesh.skeleton;
+    let data = skinnedMeshToData(mesh);
 
-    const posAttr = geometry.getAttribute('position') as THREE.BufferAttribute;
-    const idxAttr = geometry.getIndex()!;
-    const skinWeightsAttr = geometry.getAttribute('skinWeight') as THREE.BufferAttribute;
-    const skinIndicesAttr = geometry.getAttribute('skinIndex') as THREE.BufferAttribute;
-
-    let nV = posAttr.count;
-    let nF = idxAttr.count / 3;
-    let nJ = skeleton.bones.length;
+    let nV = data.mesh[0].length;
+    let nF = data.mesh[1].length;
+    let nJ = data.skel[0].length;
     var g = new graphlib.Graph();
     let vertexDist = new Array(nV).fill(0);
     let jointDist = new Array(nJ).fill(0);
 
-    for (let i = 0; i < nV; i++) {
-        g.setNode(i, new Vec3(
-            posAttr.getX(i),
-            posAttr.getY(i),
-            posAttr.getZ(i)
-        ));
-        vertexDist[i] = plane.normal.dot(g.node(i)) + plane.offset;
-    }
-    for (let i = 0; i < nJ; i++) {
+    data.mesh[0].forEach((v, i) => {
+        g.setNode(i, v);
+        vertexDist[i] = plane.normal.dot(v) + plane.offset;
+    });
+    data.skel[0].forEach((b, i) => {
         let bone = new THREE.Bone();
         let pos = new THREE.Vector3();
 
-        bone.position.setFromMatrixPosition(skeleton.bones[i].matrixWorld);
-        bone.quaternion.setFromRotationMatrix(skeleton.bones[i].matrixWorld);
-        bone.scale.setFromMatrixScale(skeleton.bones[i].matrixWorld);
+        bone.position.setFromMatrixPosition(b.matrixWorld);
+        bone.quaternion.setFromRotationMatrix(b.matrixWorld);
+        bone.scale.setFromMatrixScale(b.matrixWorld);
         bone.getWorldPosition(pos);
 
         g.setNode(i + nV, bone);
         jointDist[i] = plane.normal.dot(pos) + plane.offset;
-    }
-    for (let i = 0; i < nF; i++) {
-        let v0 = idxAttr.getX(i * 3);
-        let v1 = idxAttr.getX(i * 3 + 1);
-        let v2 = idxAttr.getX(i * 3 + 2);
-        if ((vertexDist[v0] >= 0 && vertexDist[v1] >= 0 && vertexDist[v2] >= 0) ||
-            (vertexDist[v0] <  0 && vertexDist[v1] <  0 && vertexDist[v2] <  0)
+    });
+    data.mesh[1].forEach(([i0, i1, i2], i) => {
+        if ((vertexDist[i0] >= 0 && vertexDist[i1] >= 0 && vertexDist[i2] >= 0) ||
+            (vertexDist[i0] <  0 && vertexDist[i1] <  0 && vertexDist[i2] <  0)
         ) {
-            g.setEdge(v0, v1, v2);
-            g.setEdge(v1, v2, v0);
-            g.setEdge(v2, v0, v1);
+            g.setEdge(i0, i1, i2);
+            g.setEdge(i1, i2, i0);
+            g.setEdge(i2, i0, i1);
         }
-    }
-    for (let i = 0; i < nJ; i++)
-    for (let c of skeleton.bones[i].children) {
-        let j = skeleton.bones.indexOf(c);
-        if (j < 0) continue;
-        if ((jointDist[i] >= 0 && jointDist[j] >= 0) ||
-            (jointDist[i] <  0 && jointDist[j] <  0)
+    });
+    data.skel[1].forEach(([i0, i1], i) => {
+        if ((jointDist[i0] >= 0 && jointDist[i1] >= 0) ||
+            (jointDist[i0] <  0 && jointDist[i1] <  0)
         ) {
-            g.setEdge(i + nV, j + nV);
-            g.setEdge(j + nV, i + nV);
+            g.setEdge(i0+nV, i1+nV);
+            g.setEdge(i1+nV, i0+nV);
         }
-    }
+    });
+
     for (let i = 0; i < nV; i++)
     for (let j = 0; j < 4; j++) {
-        let k = skinIndicesAttr.getComponent(i, j);
-        let w = skinWeightsAttr.getComponent(i, j);
+        let k = data.skinIndices[i][j];
+        let w = data.skinWeights[i][j];
         if ((vertexDist[i] >= 0 && jointDist[k] >= 0) ||
             (vertexDist[i] <  0 && jointDist[k] <  0)
         ) {
@@ -263,9 +248,7 @@ export function runMeshCut(mesh: THREE.SkinnedMesh, plane: Plane, smoothFactor: 
             polygon2D.reverse();
             inversed = true;
         }
-        
-        // Generate triangle grid inside the polygon
-        const spacing = 10; // TODO: compute from polygon size
+        const spacing = 10;
         const gridPoints2D = geo2d.generateTriangleGrid(polygon2D, spacing);
         const gridPoints3D = gridPoints2D.map(p => 
             projectTo3D(p, basisU, basisV, planeOrigin)
