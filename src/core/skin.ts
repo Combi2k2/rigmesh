@@ -78,10 +78,14 @@ export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number
 
         for (let j = 0; j < nV; j++) {
             let w_b = w.get(j, 0);
-            if (w_b) {
-                skin_weights[j][i1] += w_b;
-                skin_weights[j][i0] += w_b;
-            }
+            const v0 = skel[0][i0];
+            const v1 = skel[0][i1];
+            const v = mesh[0][j];
+            const bone = v1.minus(v0);
+            const t = Math.max(0, Math.min(1, v.minus(v0).dot(bone) / bone.norm2()));
+
+            skin_weights[j][i0] += w_b * (1 - t);
+            skin_weights[j][i1] += w_b * t;
         }
     });
     return skin_weights;
