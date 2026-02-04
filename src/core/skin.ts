@@ -1,13 +1,13 @@
 const { Mesh } = require('@/lib/geometry/mesh');
-import { Vec3 } from '@/interface';
+import { MeshData } from '@/interface';
+import { SkelData } from '@/interface';
 import * as LinearAlgebra from '@/lib/linalg/linear-algebra.js';
 
-let DenseMatrix = LinearAlgebra.DenseMatrix;
-let SparseMatrix = LinearAlgebra.SparseMatrix;
-let Triplet = LinearAlgebra.Triplet;
+const DenseMatrix = LinearAlgebra.DenseMatrix;
+const SparseMatrix = LinearAlgebra.SparseMatrix;
+const Triplet = LinearAlgebra.Triplet;
 
-export type MeshData = [Vec3[], number[][]];
-export type SkelData = [Vec3[], [number, number][]];
+var graphlib = require("graphlib");
 
 export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number[][] {
     function vector(h) {
@@ -29,6 +29,8 @@ export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number
         f: mesh[1].flat()
     });
 
+    let g = new graphlib.Graph();
+
     let closest_dist = new Array(nV).fill(Infinity);
     let closest_bone = new Array(nV).fill(-1);
     let skin_weights = new Array(nV).fill(0).map(() => new Array(skel[0].length).fill(0));
@@ -47,55 +49,38 @@ export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number
                 closest_bone[j] = i;
             }
         });
+        g.setEdge(i0, i1);
+        g.setEdge(i1, i0);
     });
+    let order = graphlib.alg.preorder(g, 0);
+    let index = new Array(nV).fill(0);
+    order.forEach((x, i) => index[Number(x)] = i);
 
     skel[1].forEach(([i0, i1], idx) => {
-        let fixed = new Array(nV).fill(true);
-        let perm = new Array(nV).fill(0);
-        let nFree = 0;
-
-        for (let j = 0; j < nV; j++) if (closest_bone[j] !== idx) {
-            let [i2, i3] = skel[1][closest_bone[j]];
-
-            if (i2 === i0 || i2 === i1 || i3 === i0 || i3 === i1) {
-                fixed[j] = false;
-                nFree++;
-            }
-        }
-        let indexFree = 0;
-        let indexBound = nFree;
+        let T = new Triplet(nV, nV);
+        let B = DenseMatrix.zeros(nV, 1);
 
         for (let j = 0; j < nV; j++) {
-            if (fixed[j])   perm[j] = indexBound++;
-            else            perm[j] = indexFree++;
-        }
-        let T = new Triplet(nFree, nFree);
-        let B = DenseMatrix.zeros(nFree, 1);
-
-        for (let j = 0; j < nV; j++) if (!fixed[j]) {
-            let sum = 0;
+            let coeff = 100 / closest_dist[j]**2;
+            T.addEntry(coeff, j, j);
+            B.set(closest_bone[j] === idx ? coeff : 0, j, 0);
 
             for (let h of meshObj.vertices[j].adjacentHalfedges()) {
                 let k = h.next.vertex.index;
                 let w = (cotan(h) + cotan(h.twin))/2;
 
-                if (fixed[k]) {
-                    sum += (closest_bone[k] === idx ? 1 : 0) * w;
-                } else {
-                    T.addEntry(-w, perm[j], perm[k]);
-                    T.addEntry(w, perm[j], perm[j]);
-                }
+                T.addEntry(-w, j, k);
+                T.addEntry(w, j, j);
             }
-            B.set(sum, perm[j], 0);
         }
         let A = SparseMatrix.fromTriplet(T);
         let w = A.chol().solvePositiveDefinite(B);
 
         for (let j = 0; j < nV; j++) {
-            let w_b = fixed[j] ? (closest_bone[j] === idx ? 1 : 0) : w.get(perm[j], 0);
+            let w_b = w.get(j, 0);
             if (w_b) {
-                skin_weights[j][i0] += w_b;
                 skin_weights[j][i1] += w_b;
+                skin_weights[j][i0] += w_b;
             }
         }
     });
