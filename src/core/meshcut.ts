@@ -12,6 +12,7 @@ import * as THREE from 'three';
 const cdt2d = require('cdt2d');
 import * as geo2d from '@/utils/geo2d';
 import * as geo3d from '@/utils/geo3d';
+import * as skin from '@/core/skin';
 
 var graphlib = require("graphlib");
 
@@ -126,33 +127,16 @@ export function computeCutPlaneFromScreenLine(
     };
 }
 
-export function runMeshCut(mesh: THREE.SkinnedMesh, plane: Plane, smoothFactor: number = 0.5): THREE.SkinnedMesh[] {
+export function runMeshCut(mesh: THREE.SkinnedMesh, plane: Plane, sharpFactor: number = 0.5): THREE.SkinnedMesh[] {
     let data = skinnedMeshToData(mesh);
 
     let nV = data.mesh[0].length;
-    let nF = data.mesh[1].length;
-    let nJ = data.skel[0].length;
     var g = new graphlib.Graph();
-    let vertexDist = new Array(nV).fill(0);
-    let jointDist = new Array(nJ).fill(0);
+    let vertexDist = data.mesh[0].map(v => plane.normal.dot(v) + plane.offset);
+    let jointDist = data.skel[0].map(b => plane.normal.dot(b) + plane.offset);
+    let spacing = 0;
 
-    data.mesh[0].forEach((v, i) => {
-        g.setNode(i, v);
-        vertexDist[i] = plane.normal.dot(v) + plane.offset;
-    });
-    data.skel[0].forEach((b, i) => {
-        let bone = new THREE.Bone();
-        let pos = new THREE.Vector3();
-
-        bone.position.setFromMatrixPosition(b.matrixWorld);
-        bone.quaternion.setFromRotationMatrix(b.matrixWorld);
-        bone.scale.setFromMatrixScale(b.matrixWorld);
-        bone.getWorldPosition(pos);
-
-        g.setNode(i + nV, bone);
-        jointDist[i] = plane.normal.dot(pos) + plane.offset;
-    });
-    data.mesh[1].forEach(([i0, i1, i2], i) => {
+    data.mesh[1].forEach(([i0, i1, i2], _) => {
         if ((vertexDist[i0] >= 0 && vertexDist[i1] >= 0 && vertexDist[i2] >= 0) ||
             (vertexDist[i0] <  0 && vertexDist[i1] <  0 && vertexDist[i2] <  0)
         ) {
@@ -160,25 +144,80 @@ export function runMeshCut(mesh: THREE.SkinnedMesh, plane: Plane, smoothFactor: 
             g.setEdge(i1, i2, i0);
             g.setEdge(i2, i0, i1);
         }
+        spacing += data.mesh[0][i0].minus(data.mesh[0][i1]).norm();
+        spacing += data.mesh[0][i1].minus(data.mesh[0][i2]).norm();
+        spacing += data.mesh[0][i2].minus(data.mesh[0][i0]).norm();
     });
+    spacing /= 3 * data.mesh[1].length;
+
+    let splitMap = new Map<number, [number, number]>();
+
     data.skel[1].forEach(([i0, i1], i) => {
-        if ((jointDist[i0] >= 0 && jointDist[i1] >= 0) ||
-            (jointDist[i0] <  0 && jointDist[i1] <  0)
-        ) {
-            g.setEdge(i0+nV, i1+nV);
-            g.setEdge(i1+nV, i0+nV);
+        if (jointDist[i0] >= 0 && jointDist[i1] >= 0)   return;
+        if (jointDist[i0] <  0 && jointDist[i1] <  0)   return;
+
+        let v0 = data.skel[0][i0];
+        let v1 = data.skel[0][i1];
+        let dir = v1.minus(v0).over(Math.abs(jointDist[i0]) + Math.abs(jointDist[i1]));
+        let newBone0 = -1;
+        let newBone1 = -1;
+
+        if (Math.abs(jointDist[i0]) >= 3 * spacing) {
+            let newPos = v0.plus(dir.times(Math.abs(jointDist[i0]) - 1.5 * spacing));
+            data.skel[0].push(newPos);
+            data.skel[1].push([i0, data.skel[0].length - 1]);
+            jointDist.push(plane.normal.dot(newPos) + plane.offset);
+            newBone0 = data.skel[1].length - 1;
         }
+        if (Math.abs(jointDist[i1]) >= 3 * spacing) {
+            let newPos = v0.plus(dir.times(Math.abs(jointDist[i0]) + 1.5 * spacing));
+            data.skel[0].push(newPos);
+            data.skel[1].push([i1, data.skel[0].length - 1]);
+            jointDist.push(plane.normal.dot(newPos) + plane.offset);
+            newBone1 = data.skel[1].length - 1;
+        }
+        splitMap.set(i, [newBone0, newBone1]);
     });
+    const offsetJoint = nV;
+    const offsetBone = nV + data.skel[0].length;
+
+    data.skel[1].forEach(([i0, i1], i) => {
+        if (!splitMap.has(i)) {
+            g.setEdge(i0 + offsetJoint, i + offsetBone);
+            g.setEdge(i1 + offsetJoint, i + offsetBone);
+            g.setEdge(i + offsetBone, i0 + offsetJoint);
+            g.setEdge(i + offsetBone, i1 + offsetJoint);
+        }
+    })
 
     for (let i = 0; i < nV; i++)
     for (let j = 0; j < 4; j++) {
         let k = data.skinIndices[i][j];
         let w = data.skinWeights[i][j];
-        if ((vertexDist[i] >= 0 && jointDist[k] >= 0) ||
-            (vertexDist[i] <  0 && jointDist[k] <  0)
-        ) {
-            g.setEdge(i, k+nV, w);
-            g.setEdge(k+nV, i, w);
+        if (splitMap.has(k)) {
+            let [i0, _]  = data.skel[1][k];
+            let [k0, k1] = splitMap.get(k);
+
+            let sameSide = (
+                (vertexDist[i] >= 0 && jointDist[i0] >= 0) ||
+                (vertexDist[i] <  0 && jointDist[i0] <  0)
+            );
+            if (k0 >= 0 && sameSide) {
+                g.setEdge(i, k0 + offsetBone, w);
+                g.setEdge(k0 + offsetBone, i, w);
+            }
+            if (k1 >= 0 && !sameSide) {
+                g.setEdge(i, k1 + offsetBone, w);
+                g.setEdge(k1 + offsetBone, i, w);
+            }
+        } else {
+            let [t, _] = data.skel[1][k];
+            if ((vertexDist[i] >= 0 && jointDist[t] >= 0) ||
+                (vertexDist[i] <  0 && jointDist[t] <  0)
+            ) {
+                g.setEdge(i, k + offsetBone, w);
+                g.setEdge(k + offsetBone, i, w);
+            }
         }
     }
     let components = graphlib.alg.components(g);
@@ -190,22 +229,36 @@ export function runMeshCut(mesh: THREE.SkinnedMesh, plane: Plane, smoothFactor: 
     
     components.forEach(comp => {
         let vIdxMap = new Map();
+        let bIdxMap = new Map();
         let jIdxMap = new Map();
 
         comp.forEach((x, _) => {
-            if (x < nV) vIdxMap.set(Number(x), vIdxMap.size);
-            else        jIdxMap.set(Number(x), jIdxMap.size);
+            if (x < nV) {
+                vIdxMap.set(Number(x), vIdxMap.size);
+            } else if (x < offsetBone) {
+                jIdxMap.set(Number(x), jIdxMap.size);
+            } else {
+                bIdxMap.set(Number(x), bIdxMap.size);
+            }
         });
         let V = new Array(vIdxMap.size), F = [];
-        let J = new Array(jIdxMap.size), B = [];
+        let J = new Array(jIdxMap.size), B = new Array(bIdxMap.size);
         let skinWeights = new Array(vIdxMap.size);
         let skinIndices = new Array(vIdxMap.size);
         
         // Track edge usage to detect boundary edges\
         let edges = new Map<string, [number, number]>();
 
+        vIdxMap.forEach((i, u) => { V[i] = data.mesh[0][u]; });
+        jIdxMap.forEach((i, u) => { J[i] = data.skel[0][u - offsetJoint]; });
+        bIdxMap.forEach((i, k) => {
+            let [i0, i1] = data.skel[1][k - offsetBone];
+            B[i] = [
+                jIdxMap.get(i0+offsetJoint),
+                jIdxMap.get(i1+offsetJoint)
+            ];
+        });
         vIdxMap.forEach((i, u) => {
-            V[i] = g.node(u);
             let weights = [];
             let indices = [];
 
@@ -226,12 +279,13 @@ export function runMeshCut(mesh: THREE.SkinnedMesh, plane: Plane, smoothFactor: 
                         edges.set(key, [v, u]);
                 } else {
                     weights.push(w);
-                    indices.push(jIdxMap.get(v));
+                    indices.push(bIdxMap.get(v));
                 }
             }
             skinWeights[i] = weights;
             skinIndices[i] = indices;
         });
+        
         let boundaryLoop = [];
         let boundaryG = new graphlib.Graph();
         edges.forEach(([a, b]) => {
@@ -241,71 +295,53 @@ export function runMeshCut(mesh: THREE.SkinnedMesh, plane: Plane, smoothFactor: 
             boundaryLoop = graphlib.alg.preorder(boundaryG, boundaryG.nodes()[0])
             boundaryLoop = boundaryLoop.map(x => vIdxMap.get(Number(x)));
         }
-        let polygon2D = boundaryLoop.map(idx => projectTo2D(V[idx], plane, basisU, basisV, planeOrigin));
-        let inversed = false;
-        if (geo2d.isClockwise(polygon2D)) {
+        let polygon = boundaryLoop.map(idx => projectTo2D(V[idx], plane, basisU, basisV, planeOrigin));
+        let inverse = false;
+        if (geo2d.isClockwise(polygon)) {
             boundaryLoop.reverse();
-            polygon2D.reverse();
-            inversed = true;
+            polygon.reverse();
+            inverse = true;
         }
-        const spacing = 10;
-        const gridPoints2D = geo2d.generateTriangleGrid(polygon2D, spacing);
-        const gridPoints3D = gridPoints2D.map(p => 
-            projectTo3D(p, basisU, basisV, planeOrigin)
-        );
+        const gridPoints = geo2d.generateTriangleGrid(polygon, spacing);
+        const points = [];
+        const offset = V.length;
+        polygon.forEach(p => points.push([p.x, p.y]));
+        gridPoints.forEach(p => points.push([p.x, p.y]));
 
-        let points = [];
-        let offset = V.length;
-        polygon2D.forEach(p => points.push([p.x, p.y]));
-        gridPoints2D.forEach((p, i) => {
-            points.push([p.x, p.y]);
-            V.push(gridPoints3D[i]);
+        let faces = cdt2d(points, polygon.map((_, index) => [index, (index+1)%polygon.length]), {exterior: false});
+        let verts = points.map(p => projectTo3D(p, basisU, basisV, planeOrigin));
+        let constraints = [];
+
+        for (let i = 0; i < boundaryLoop.length; i++) {
+            verts[i] = V[boundaryLoop[i]];
+            constraints.push(i);
+        }
+        geo3d.runLeastSquaresMesh(verts, faces, constraints, 0.1/sharpFactor);
+
+        for (let i = polygon.length; i < verts.length; i++) {
+            V.push(verts[i]);
             skinWeights.push([]);
             skinIndices.push([]);
-        });
-        let faces = cdt2d(points, polygon2D.map((_, index) => [index, (index+1)%polygon2D.length]), {exterior: false});
+        }
         for (let f of faces) {
             let face = [];
             for (let v of f) {
-                if (v < polygon2D.length) {
+                if (v < polygon.length) {
                     face.push(boundaryLoop[v]);
                 } else {
-                    face.push(offset + v - polygon2D.length);
+                    face.push(offset + v - polygon.length);
                 }
             }
-            if (inversed) face.reverse();
+            if (inverse)
+                face.reverse();
+            
             F.push(face);
-        }
-        
-        jIdxMap.forEach((i, u) => {
-            J[i] = g.node(u);
-            for (let e of g.outEdges(u)) if (e.w >= V.length) {
-                let v = Number(e.w);
-                if (u < v)
-                    B.push([
-                        jIdxMap.get(u),
-                        jIdxMap.get(v)
-                    ]);
-            }
-        });
-        for (let i = 0; i < V.length; i++) {
-            while (skinWeights[i].length < 4) {
-                skinWeights[i].push(0);
-                skinIndices[i].push(0);
-            }
-
-            let sum = skinWeights[i].reduce((a, b) => a + b, 0);
-            if (sum === 0) {
-                sum = 1;
-                skinWeights[i][0] = 1;
-            }
-            skinWeights[i] = skinWeights[i].map(w => w / sum);
         }
         newMeshes.push(skinnedMeshFromData({
             mesh: [V, F],
             skel: [J, B],
-            skinWeights,
-            skinIndices
+            skinWeights: skin.computeSkinWeightsGlobal([V, F], [J, B]),
+            skinIndices: null
         }));
     });
     return newMeshes;
