@@ -10,15 +10,6 @@ const { Mesh } = require('@/lib/geometry/mesh');
 var Graph = require("graphlib").Graph;
 var cdt2d = require('cdt2d');
 
-function isClockwise(points: Point[]) {
-    let sum = 0;
-    for (let i = 0; i < points.length; i++) {
-        const j = (i + 1) % points.length;
-        sum += (points[j].x - points[i].x) * (points[j].y + points[i].y);
-    }
-    return sum > 0;
-}
-
 function reparameterize(points: Point[], isodistance: number) {
     let length = 0;
     for (let i = 0; i < points.length; i++) {
@@ -724,7 +715,7 @@ class MeshGen {
             // Check first edge orientation
             if (edges.length > 0) {
                 let [i0, i1] = edges[0];
-                if (isClockwise([
+                if (geo2d.isClockwise([
                     {x: points[i0][0], y: points[i0][1]},
                     {x: points[i1][0], y: points[i1][1]},
                     centroid
