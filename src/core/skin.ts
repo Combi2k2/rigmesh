@@ -33,7 +33,7 @@ export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number
 
     let closest_dist = new Array(nV).fill(Infinity);
     let closest_bone = new Array(nV).fill(-1);
-    let skin_weights = new Array(nV).fill(0).map(() => new Array(skel[0].length).fill(0));
+    let skin_weights = new Array(nV).fill(0).map(() => new Array(skel[1].length).fill(0));
 
     skel[1].forEach(([i0, i1], i) => {
         const v0 = skel[0][i0];
@@ -76,17 +76,8 @@ export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number
         let A = SparseMatrix.fromTriplet(T);
         let w = A.chol().solvePositiveDefinite(B);
 
-        for (let j = 0; j < nV; j++) {
-            let w_b = w.get(j, 0);
-            const v0 = skel[0][i0];
-            const v1 = skel[0][i1];
-            const v = mesh[0][j];
-            const bone = v1.minus(v0);
-            const t = Math.max(0, Math.min(1, v.minus(v0).dot(bone) / bone.norm2()));
-
-            skin_weights[j][i0] += w_b * (1 - t);
-            skin_weights[j][i1] += w_b * t;
-        }
+        for (let j = 0; j < nV; j++)
+            skin_weights[j][idx] = w.get(j, 0);
     });
     return skin_weights;
 }
