@@ -5,14 +5,82 @@
  * Flow is split into phases: runClassification, runBoundaryExtraction, runPatchTriangulation, runLocalizedSmoothing.
  */
 
-import { Vec3, Plane } from '@/interface';
+import { Vec2, Vec3, Plane } from '@/interface';
 import { skinnedMeshFromData } from '@/utils/skinnedMesh';
 import { skinnedMeshToData } from '@/utils/skinnedMesh';
 import * as THREE from 'three';
 const cdt2d = require('cdt2d');
 import * as geo2d from '@/utils/geo2d';
+import * as geo3d from '@/utils/geo3d';
 
 var graphlib = require("graphlib");
+
+/**
+ * Project a 3D vertex onto a plane and get its 2D coordinates.
+ * @param vertex The 3D point to project
+ * @param plane The plane (normal and offset)
+ * @param basisU First basis vector on the plane
+ * @param basisV Second basis vector on the plane (orthogonal to basisU)
+ * @param origin Origin point on the plane
+ * @returns {x, y} coordinates in the plane's local system
+ */
+export function projectTo2D(
+    vertex: Vec3,
+    plane: Plane,
+    basisU: Vec3,
+    basisV: Vec3,
+    origin: Vec3
+): { x: number; y: number } {
+    const { normal, offset } = plane;
+    const signedDist = normal.dot(vertex) + offset;
+    const projected = vertex.minus(normal.times(signedDist));
+    const fromOrigin = projected.minus(origin);
+    return {
+        x: fromOrigin.dot(basisU),
+        y: fromOrigin.dot(basisV)
+    };
+}
+
+/**
+ * Convert 2D coordinates back to 3D point on the plane.
+ * @param point2D The {x, y} coordinates in the plane's local system
+ * @param basisU First basis vector on the plane
+ * @param basisV Second basis vector on the plane
+ * @param origin Origin point on the plane
+ * @returns The 3D point on the plane
+ */
+export function projectTo3D(
+    point2D: { x: number; y: number },
+    basisU: Vec3,
+    basisV: Vec3,
+    origin: Vec3
+): Vec3 {
+    return origin.plus(basisU.times(point2D.x)).plus(basisV.times(point2D.y));
+}
+
+/**
+ * Compute orthogonal basis vectors for a plane.
+ * @param normal The plane normal (unit vector)
+ * @returns [basisU, basisV] two orthogonal unit vectors on the plane
+ */
+export function computePlaneBasis(normal: Vec3): [Vec3, Vec3] {
+    const absX = Math.abs(normal.x);
+    const absY = Math.abs(normal.y);
+    const absZ = Math.abs(normal.z);
+    
+    let tempVec: Vec3;
+    if (absX <= absY && absX <= absZ) {
+        tempVec = new Vec3(1, 0, 0);
+    } else if (absY <= absZ) {
+        tempVec = new Vec3(0, 1, 0);
+    } else {
+        tempVec = new Vec3(0, 0, 1);
+    }
+    
+    const basisU = tempVec.minus(normal.times(tempVec.dot(normal))).unit();
+    const basisV = normal.cross(basisU);
+    return [basisU, basisV];
+}
 
 /** Screen-space line: two NDC points (Vec2 or [x,y] tuple) */
 export type ScreenLine = [[number, number], [number, number]];
@@ -58,7 +126,7 @@ export function computeCutPlaneFromScreenLine(
     };
 }
 
-export function runMeshSplitting(mesh: THREE.SkinnedMesh, plane: Plane): THREE.SkinnedMesh[] {
+export function runMeshCut(mesh: THREE.SkinnedMesh, plane: Plane, smoothFactor: number = 0.5): THREE.SkinnedMesh[] {
     const geometry = mesh.geometry;
     const skeleton = mesh.skeleton;
 
@@ -130,6 +198,11 @@ export function runMeshSplitting(mesh: THREE.SkinnedMesh, plane: Plane): THREE.S
     }
     let components = graphlib.alg.components(g);
     let newMeshes = [];
+    
+    // Compute plane basis for 2D projection
+    const [basisU, basisV] = computePlaneBasis(plane.normal);
+    const planeOrigin = plane.normal.times(-plane.offset);
+    
     components.forEach(comp => {
         let vIdxMap = new Map();
         let jIdxMap = new Map();
@@ -142,6 +215,9 @@ export function runMeshSplitting(mesh: THREE.SkinnedMesh, plane: Plane): THREE.S
         let J = new Array(jIdxMap.size), B = [];
         let skinWeights = new Array(vIdxMap.size);
         let skinIndices = new Array(vIdxMap.size);
+        
+        // Track edge usage to detect boundary edges\
+        let edges = new Map<string, [number, number]>();
 
         vIdxMap.forEach((i, u) => {
             V[i] = g.node(u);
@@ -158,17 +234,66 @@ export function runMeshSplitting(mesh: THREE.SkinnedMesh, plane: Plane): THREE.S
                             vIdxMap.get(v),
                             vIdxMap.get(w)
                         ]);
+                    let key = u < v ? `${u},${v}` : `${v},${u}`;
+                    if (edges.has(key))
+                        edges.delete(key);
+                    else
+                        edges.set(key, [v, u]);
                 } else {
                     weights.push(w);
                     indices.push(jIdxMap.get(v));
                 }
             }
-            let sum = weights.reduce((a, b) => a + b, 0);
-            weights = weights.map(w => w / sum);
-
             skinWeights[i] = weights;
             skinIndices[i] = indices;
         });
+        let boundaryLoop = [];
+        let boundaryG = new graphlib.Graph();
+        edges.forEach(([a, b]) => {
+            boundaryG.setEdge(a, b);
+        });
+        if (boundaryG.nodeCount() > 0) {
+            boundaryLoop = graphlib.alg.preorder(boundaryG, boundaryG.nodes()[0])
+            boundaryLoop = boundaryLoop.map(x => vIdxMap.get(Number(x)));
+        }
+        let polygon2D = boundaryLoop.map(idx => projectTo2D(V[idx], plane, basisU, basisV, planeOrigin));
+        let inversed = false;
+        if (geo2d.isClockwise(polygon2D)) {
+            boundaryLoop.reverse();
+            polygon2D.reverse();
+            inversed = true;
+        }
+        
+        // Generate triangle grid inside the polygon
+        const spacing = 10; // TODO: compute from polygon size
+        const gridPoints2D = geo2d.generateTriangleGrid(polygon2D, spacing);
+        const gridPoints3D = gridPoints2D.map(p => 
+            projectTo3D(p, basisU, basisV, planeOrigin)
+        );
+
+        let points = [];
+        let offset = V.length;
+        polygon2D.forEach(p => points.push([p.x, p.y]));
+        gridPoints2D.forEach((p, i) => {
+            points.push([p.x, p.y]);
+            V.push(gridPoints3D[i]);
+            skinWeights.push([]);
+            skinIndices.push([]);
+        });
+        let faces = cdt2d(points, polygon2D.map((_, index) => [index, (index+1)%polygon2D.length]), {exterior: false});
+        for (let f of faces) {
+            let face = [];
+            for (let v of f) {
+                if (v < polygon2D.length) {
+                    face.push(boundaryLoop[v]);
+                } else {
+                    face.push(offset + v - polygon2D.length);
+                }
+            }
+            if (inversed) face.reverse();
+            F.push(face);
+        }
+        
         jIdxMap.forEach((i, u) => {
             J[i] = g.node(u);
             for (let e of g.outEdges(u)) if (e.w >= V.length) {
@@ -185,9 +310,14 @@ export function runMeshSplitting(mesh: THREE.SkinnedMesh, plane: Plane): THREE.S
                 skinWeights[i].push(0);
                 skinIndices[i].push(0);
             }
+
+            let sum = skinWeights[i].reduce((a, b) => a + b, 0);
+            if (sum === 0) {
+                sum = 1;
+                skinWeights[i][0] = 1;
+            }
+            skinWeights[i] = skinWeights[i].map(w => w / sum);
         }
-        console.log("new mesh: ", V.length, F.length, J.length, B.length);
-        console.log("new bone: ", B);
         newMeshes.push(skinnedMeshFromData({
             mesh: [V, F],
             skel: [J, B],
