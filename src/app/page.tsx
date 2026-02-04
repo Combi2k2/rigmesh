@@ -7,7 +7,6 @@ import { useViewSpaceMesh } from '@/hooks/useViewSpaceMesh';
 import MeshGenUI from '@/components/meshgenUI/MeshGenUI';
 import Scene from '@/components/main/Scene';
 import Canvas from '@/components/canvas';
-import MeshRigUI from '@/components/meshopsUI/meshRigUI';
 import { MeshCutUI } from '@/components/meshcutUI';
 import { computeSkinWeightsGlobal } from '@/core/skin';
 import { skinnedMeshFromData } from '@/utils/skinnedMesh';
@@ -228,22 +227,18 @@ export default function Page() {
                 </div>
             )}
 
-            {showRigUI && riggingMesh && (
-                <MeshRigUI
-                    skinnedMesh={riggingMesh}
-                    onClose={() => {
-                        setShowRigUI(false);
-                        setRiggingMesh(null);
-                    }}
-                />
-            )}
-
             {showCutUI && cuttingMesh && (
                 <MeshCutUI
                     skinnedMesh={cuttingMesh}
                     onComplete={(meshes) => {
                         // Add the result meshes to the scene (already THREE.SkinnedMesh)
                         meshes.forEach(mesh => {
+                            // Reset color to white before adding to main scene
+                            if (mesh.material instanceof THREE.MeshStandardMaterial) {
+                                mesh.material.color.setHex(0xffffff);
+                            }
+                            // Reset position (remove preview offset)
+                            mesh.position.set(0, 0, 0);
                             sceneHooks.addSkinnedMesh(mesh);
                         });
                         // Remove the original mesh
