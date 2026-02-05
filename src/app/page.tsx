@@ -237,8 +237,6 @@ export default function Page() {
                             if (mesh.material instanceof THREE.MeshStandardMaterial) {
                                 mesh.material.color.setHex(0xffffff);
                             }
-                            // Reset position (remove preview offset)
-                            mesh.position.set(0, 0, 0);
                             sceneHooks.addSkinnedMesh(mesh);
                         });
                         // Remove the original mesh

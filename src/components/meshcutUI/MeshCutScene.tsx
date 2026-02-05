@@ -117,10 +117,6 @@ export default function MeshCutScene({
                     COLORS.RESULT_COLORS[index % COLORS.RESULT_COLORS.length]
                 );
                 
-                // Offset meshes so they don't overlap
-                const offset = (index - (resultMeshes.length - 1) / 2) * 20;
-                mesh.position.set(offset, 0, 0);
-                
                 vsMesh.addSkinnedMesh(mesh);
                 resultMeshRefs.current.push(mesh);
             });
@@ -128,9 +124,7 @@ export default function MeshCutScene({
 
         return () => {
             // Only remove from scene, don't dispose (meshes are managed by hook)
-            resultMeshRefs.current.forEach(mesh => {
-                vsMesh.delSkinnedMesh(mesh);
-            });
+            resultMeshRefs.current.forEach(mesh => vsMesh.delSkinnedMesh(mesh));
             resultMeshRefs.current = [];
         };
     }, [currentStep, resultMeshes, vs.sceneRef, vsMesh.addSkinnedMesh, vsMesh.delSkinnedMesh]);

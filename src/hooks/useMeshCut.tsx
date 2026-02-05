@@ -50,6 +50,22 @@ export function useMeshCut(
 
         const plane: Plane = { normal, offset };
         const results = runMeshCut(inputMesh, plane, sharpFactor);
+
+        results.forEach(mesh => {
+            let v = new THREE.Vector3();
+            v.fromBufferAttribute(mesh.geometry.getAttribute('position'), 0);
+            v.applyMatrix4(mesh.matrixWorld);
+
+            let pushDir = normal;
+
+            if (normal.dot(v) + offset < 0)
+                pushDir = pushDir.times(-1);
+
+            mesh.position.x += pushDir.x * 5;
+            mesh.position.y += pushDir.y * 5;
+            mesh.position.z += pushDir.z * 5;
+            mesh.updateMatrixWorld(true);
+        });
         
         setCutPlane(plane);
         setResultMeshes(results);
