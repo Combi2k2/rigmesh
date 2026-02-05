@@ -7,8 +7,6 @@ const DenseMatrix = LinearAlgebra.DenseMatrix;
 const SparseMatrix = LinearAlgebra.SparseMatrix;
 const Triplet = LinearAlgebra.Triplet;
 
-var graphlib = require("graphlib");
-
 export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number[][] {
     function vector(h) {
         let a = mesh[0][h.vertex];
@@ -29,8 +27,6 @@ export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number
         f: mesh[1].flat()
     });
 
-    let g = new graphlib.Graph();
-
     let closest_dist = new Array(nV).fill(Infinity);
     let closest_bone = new Array(nV).fill(-1);
     let skin_weights = new Array(nV).fill(0).map(() => new Array(skel[1].length).fill(0));
@@ -49,12 +45,7 @@ export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number
                 closest_bone[j] = i;
             }
         });
-        g.setEdge(i0, i1);
-        g.setEdge(i1, i0);
     });
-    let order = graphlib.alg.preorder(g, 0);
-    let index = new Array(nV).fill(0);
-    order.forEach((x, i) => index[Number(x)] = i);
 
     skel[1].forEach(([i0, i1], idx) => {
         let T = new Triplet(nV, nV);
