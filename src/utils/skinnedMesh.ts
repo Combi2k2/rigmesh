@@ -147,12 +147,13 @@ export const extractMeshData = (mesh: THREE.SkinnedMesh | THREE.Mesh): MeshData 
     let meshData: MeshData = [[], []];
     let posAttr = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
     let idxAttr = mesh.geometry.getIndex()!;
-    for (let i = 0; i < posAttr.count; i++)
-        meshData[0].push(new Vec3(
-            posAttr.getX(i),
-            posAttr.getY(i),
-            posAttr.getZ(i)
-        ));
+    for (let i = 0; i < posAttr.count; i++) {
+        let v = new THREE.Vector3();
+
+        v.fromBufferAttribute(posAttr, i);
+        v.applyMatrix4(mesh.matrixWorld);
+        meshData[0].push(new Vec3(v.x, v.y, v.z));
+    }
     for (let i = 0; i < idxAttr.count; i += 3)
         meshData[1].push([
             idxAttr.getX(i),
@@ -180,19 +181,26 @@ export const extractSkelData = (mesh: THREE.SkinnedMesh): SkelData => {
     return [ joints, bones ];
 }
 export const skinnedMeshFromData = (data: SkinnedMeshData): THREE.SkinnedMesh => {
-    if (data.skel[1].length === 0) {
-        let centroid = new Vec3(0, 0, 0);
-        data.mesh[0].forEach(v => centroid.incrementBy(v));
-        data.skel[0] = [centroid.over(data.mesh[0].length)];
-    }
+    let centroid = new Vec3(0, 0, 0);
+    data.mesh[0].forEach(v => centroid.incrementBy(v));
+    centroid.divideBy(data.mesh[0].length);
+
+    if (data.skel[1].length === 0)
+        data.skel[0] = [centroid];
+
+    for (let i = 0; i < data.mesh[0].length; i++)   data.mesh[0][i].decrementBy(centroid);
+    for (let i = 0; i < data.skel[0].length; i++)   data.skel[0][i].decrementBy(centroid);
+    
     const mesh = buildMesh(data.mesh);
     const skel = buildSkel(data.skel);
 
     mesh.geometry.setAttribute('bone', new THREE.Uint16BufferAttribute(data.skel[1].flat(), 2));
     mesh.geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(new Array(data.mesh[0].length).fill(1), 4));
     mesh.geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(new Array(data.mesh[0].length).fill(0), 4));
-    mesh.attach(skel.bones[0]);
+    mesh.add(skel.bones[0]);
     mesh.bind(skel);
+    mesh.position.set(centroid.x, centroid.y, centroid.z);
+    mesh.updateMatrixWorld(true);
     setSkinWeights(mesh, data.skinWeights, data.skinIndices);
 
     return mesh;
