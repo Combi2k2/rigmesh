@@ -8,6 +8,7 @@ import MeshGenUI from '@/components/meshgenUI/MeshGenUI';
 import Scene from '@/components/main/Scene';
 import Canvas from '@/components/canvas';
 import { MeshCutUI } from '@/components/meshcutUI';
+import { MeshMergeUI } from '@/components/meshmergeUI';
 import { computeSkinWeightsGlobal } from '@/core/skin';
 import { skinnedMeshFromData } from '@/utils/skinnedMesh';
 import { Point, Vec2, Vec3, MeshData, SkelData, MenuAction } from '@/interface';
@@ -32,6 +33,8 @@ export default function Page() {
     const [riggingMesh, setRiggingMesh] = useState<THREE.SkinnedMesh | null>(null);
     const [showCutUI, setShowCutUI] = useState(false);
     const [cuttingMesh, setCuttingMesh] = useState<THREE.SkinnedMesh | null>(null);
+    const [showMergeUI, setShowMergeUI] = useState(false);
+    const [mergingMeshes, setMergingMeshes] = useState<[THREE.SkinnedMesh, THREE.SkinnedMesh] | null>(null);
 
     const sceneHooks = useViewSpaceMesh(sceneRef as React.RefObject<THREE.Scene>);
     const meshGen = useMeshGen();
@@ -103,8 +106,12 @@ export default function Page() {
                     }
                     break;
                 case 'merge':
-                    // TODO: Implement merge functionality
-                    console.log('Merge action triggered for', meshes.length, 'mesh(es)');
+                    if (meshes.length >= 2) {
+                        setMergingMeshes([meshes[0], meshes[1]]);
+                        setShowMergeUI(true);
+                    } else {
+                        console.warn('Merge requires 2 meshes, got', meshes.length);
+                    }
                     break;
             }
         },
@@ -247,6 +254,29 @@ export default function Page() {
                     onCancel={() => {
                         setShowCutUI(false);
                         setCuttingMesh(null);
+                    }}
+                />
+            )}
+
+            {showMergeUI && mergingMeshes && (
+                <MeshMergeUI
+                    mesh1={mergingMeshes[0]}
+                    mesh2={mergingMeshes[1]}
+                    onComplete={(mergedMesh) => {
+                        // Reset color to white before adding to main scene
+                        if (mergedMesh.material instanceof THREE.MeshStandardMaterial) {
+                            mergedMesh.material.color.setHex(0xffffff);
+                        }
+                        sceneHooks.addSkinnedMesh(mergedMesh);
+                        // Remove the original meshes
+                        sceneHooks.delSkinnedMesh(mergingMeshes[0]);
+                        sceneHooks.delSkinnedMesh(mergingMeshes[1]);
+                        setShowMergeUI(false);
+                        setMergingMeshes(null);
+                    }}
+                    onCancel={() => {
+                        setShowMergeUI(false);
+                        setMergingMeshes(null);
                     }}
                 />
             )}
