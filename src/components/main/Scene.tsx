@@ -275,18 +275,22 @@ export default function Scene({
 
     // Handle menu actions
     const handleMenuAction = useCallback((action: MenuAction, meshes: THREE.SkinnedMesh[]) => {
-        if (onMenuAction) {
-            onMenuAction(action, meshes);
-        }
-
-        // Clear merge target for non-merge actions
-        if (action !== 'merge') {
+        if (action === 'merge' && mergeTargetMesh && meshes.length > 0) {
+            // For merge, pass both the target mesh and the current mesh
+            if (onMenuAction) {
+                onMenuAction(action, [mergeTargetMesh, meshes[0]]);
+            }
             setMergeTargetMesh(null);
         } else {
-            // Merge action - clear target after merge
-            setMergeTargetMesh(null);
+            if (onMenuAction) {
+                onMenuAction(action, meshes);
+            }
+            // Clear merge target for non-merge actions
+            if (action !== 'merge') {
+                setMergeTargetMesh(null);
+            }
         }
-    }, [onMenuAction]);
+    }, [onMenuAction, mergeTargetMesh]);
 
     // Handle selecting mesh for merge
     const handleSelectForMerge = useCallback((meshes: THREE.SkinnedMesh[]) => {
