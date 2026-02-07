@@ -1,5 +1,5 @@
 import * as LinearAlgebra from '@/lib/linalg/linear-algebra.js';
-import Queue from './queue';
+import Queue from './misc';
 let Vector = LinearAlgebra.Vector;
 let DenseMatrix = LinearAlgebra.DenseMatrix;
 let SparseMatrix = LinearAlgebra.SparseMatrix;

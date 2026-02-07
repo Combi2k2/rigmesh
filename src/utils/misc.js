@@ -1,3 +1,7 @@
+export function deepCopy(obj) {
+    return JSON.parse(JSON.stringify(obj));
+}
+
 export default class Queue {
     constructor() {
         this.data = [];

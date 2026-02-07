@@ -1,6 +1,6 @@
 var cdt2d = require('cdt2d');
 import { findMats, CpNodeFs } from 'flo-mat';
-import Queue from './queue';
+import Queue from './misc';
 
 const { traverseEdges, isTerminating, getMatCurveToNext } = CpNodeFs;
 
