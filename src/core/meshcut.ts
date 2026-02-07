@@ -6,8 +6,8 @@
  */
 
 import { Vec2, Vec3, Plane } from '@/interface';
-import { skinnedMeshFromData } from '@/utils/skinnedMesh';
-import { skinnedMeshToData } from '@/utils/skinnedMesh';
+import { skinnedMeshFromData } from '@/utils/threeMesh';
+import { skinnedMeshToData } from '@/utils/threeMesh';
 import * as THREE from 'three';
 const cdt2d = require('cdt2d');
 import * as geo2d from '@/utils/geo2d';

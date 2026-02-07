@@ -1,6 +1,6 @@
 import * as geo2d from '../utils/geo2d';
 import * as geo3d from '../utils/geo3d';
-import Queue from '../utils/queue';
+import Queue from '../utils/misc';
 import Vector from '@/lib/linalg/vector';
 import { Point, Vec2 } from '../interface/point';
 

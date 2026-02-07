@@ -10,7 +10,7 @@
  */
 
 import { Vec3, MeshData, SkelData, SkinnedMeshData } from '@/interface';
-import { skinnedMeshFromData, skinnedMeshToData } from '@/utils/skinnedMesh';
+import { skinnedMeshFromData, skinnedMeshToData } from '@/utils/threeMesh';
 import * as THREE from 'three';
 import * as geo3d from '@/utils/geo3d';
 import * as skin from '@/core/skin';

@@ -10,7 +10,7 @@ import Canvas from '@/components/canvas';
 import { MeshCutUI } from '@/components/meshcutUI';
 import { MeshMergeUI } from '@/components/meshmergeUI';
 import { computeSkinWeightsGlobal } from '@/core/skin';
-import { skinnedMeshFromData } from '@/utils/skinnedMesh';
+import { skinnedMeshFromData } from '@/utils/threeMesh';
 import { Point, Vec2, Vec3, MeshData, SkelData, MenuAction } from '@/interface';
 import * as THREE from 'three';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
