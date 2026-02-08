@@ -2,8 +2,7 @@
 
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { useMeshGen } from '@/hooks/useMeshGen';
-import { useViewSpace, ViewSpaceReturn } from '@/hooks/useViewSpace';
-import { useViewSpaceMesh } from '@/hooks/useViewSpaceMesh';
+import { SceneHooks } from '@/hooks/useScene';
 import MeshGenUI from '@/components/meshgenUI/MeshGenUI';
 import Scene from '@/components/main/Scene';
 import Canvas from '@/components/canvas';
@@ -24,8 +23,7 @@ export interface SkinnedMeshData {
 }
 
 export default function Page() {
-    const sceneRef = useRef<THREE.Scene | null>(null);
-    const viewSpaceRefsRef = useRef<ViewSpaceReturn | null>(null);
+    const sceneApiRef = useRef<SceneHooks | null>(null);
     const processedMeshesRef = useRef<Set<string>>(new Set());
     const [showCanvas, setShowCanvas] = useState(false);
     const [isSceneReady, setIsSceneReady] = useState(false);
@@ -35,8 +33,6 @@ export default function Page() {
     const [cuttingMesh, setCuttingMesh] = useState<THREE.SkinnedMesh | null>(null);
     const [showMergeUI, setShowMergeUI] = useState(false);
     const [mergingMeshes, setMergingMeshes] = useState<[THREE.SkinnedMesh, THREE.SkinnedMesh] | null>(null);
-
-    const sceneHooks = useViewSpaceMesh(sceneRef as React.RefObject<THREE.Scene>);
     const meshGen = useMeshGen();
     const [exportedData, setExportedData] = useState<SkinnedMeshData | null>(null);
     const sceneContainerRef = useRef<HTMLDivElement>(null);
@@ -44,7 +40,7 @@ export default function Page() {
     // When mesh gen completes (step > 5) and scene is ready, create skinned mesh and add to scene
     useEffect(() => {
         const { currentStep, mesh3D, skeleton } = meshGen.state;
-        if (currentStep <= 5 || !mesh3D || !skeleton || !sceneRef.current || !isSceneReady) return;
+        if (currentStep <= 5 || !mesh3D || !skeleton || !sceneApiRef.current || !isSceneReady) return;
 
         const meshKey = `${mesh3D[0].length}-${mesh3D[1].length}-${skeleton[0].length}`;
         if (processedMeshesRef.current.has(meshKey)) return;
@@ -72,12 +68,11 @@ export default function Page() {
         setExportedData(data);
 
         const skinnedMesh = skinnedMeshFromData({ mesh: mesh3D, skel: skeleton, skinWeights, skinIndices: null });
-        sceneHooks.addSkinnedMesh(skinnedMesh);
-    }, [meshGen.state.currentStep, meshGen.state.mesh3D, meshGen.state.skeleton, sceneHooks, isSceneReady]);
+        sceneApiRef.current.insertObject(skinnedMesh);
+    }, [meshGen.state.currentStep, meshGen.state.mesh3D, meshGen.state.skeleton, isSceneReady]);
 
-    const handleSceneReady = useCallback((refs: ViewSpaceReturn) => {
-        viewSpaceRefsRef.current = refs;
-        sceneRef.current = refs.sceneRef.current;
+    const handleSceneReady = useCallback((api: SceneHooks) => {
+        sceneApiRef.current = api;
         setIsSceneReady(true);
     }, []);
 
@@ -86,12 +81,12 @@ export default function Page() {
             if (!meshes || meshes.length === 0) return;
 
             switch (action) {
-                case 'copy': 
+                case 'copy':
                     const clonedMesh = SkeletonUtils.clone(meshes[0]);
-                    sceneHooks.addSkinnedMesh(clonedMesh);
+                    sceneApiRef.current?.insertObject(clonedMesh);
                     break;
                 case 'delete':
-                    meshes.forEach((mesh) => sceneHooks.delSkinnedMesh(mesh));
+                    meshes.forEach((mesh) => sceneApiRef.current?.removeObject(mesh));
                     break;
                 case 'rig':
                     if (meshes.length > 0) {
@@ -115,7 +110,7 @@ export default function Page() {
                     break;
             }
         },
-        [sceneHooks]
+        []
     );
 
     const handlePathComplete = useCallback(
@@ -149,7 +144,7 @@ export default function Page() {
             const file = event.target.files?.[0];
             if (!file) return;
 
-            if (!isSceneReady || !sceneRef.current) {
+            if (!isSceneReady || !sceneApiRef.current) {
                 alert('Scene is not ready yet. Please wait for the scene to load.');
                 event.target.value = '';
                 return;
@@ -176,7 +171,7 @@ export default function Page() {
                     ];
 
                     const skinnedMesh = skinnedMeshFromData({ mesh: mesh3D, skel: skeleton, skinWeights: data.skinWeights, skinIndices: data.skinIndices });
-                    sceneHooks.addSkinnedMesh(skinnedMesh);
+                    sceneApiRef.current.insertObject(skinnedMesh);
                     // setExportedData({ mesh: mesh3D, skel: skeleton, skinWeights: data.skinWeights, skinIndices: data.skinIndices, version: data.version });
                 } catch (error) {
                     console.error('Failed to load mesh data:', error);
@@ -187,7 +182,7 @@ export default function Page() {
             // Reset input so same file can be selected again
             event.target.value = '';
         },
-        [sceneHooks, isSceneReady]
+        [isSceneReady]
     );
 
     const isMeshGenMode = meshGen.state.currentStep <= 5;
@@ -244,10 +239,10 @@ export default function Page() {
                             if (mesh.material instanceof THREE.MeshStandardMaterial) {
                                 mesh.material.color.setHex(0xffffff);
                             }
-                            sceneHooks.addSkinnedMesh(mesh);
+                            sceneApiRef.current?.insertObject(mesh);
                         });
                         // Remove the original mesh
-                        sceneHooks.delSkinnedMesh(cuttingMesh);
+                        sceneApiRef.current?.removeObject(cuttingMesh);
                         setShowCutUI(false);
                         setCuttingMesh(null);
                     }}
@@ -267,10 +262,10 @@ export default function Page() {
                         if (mergedMesh.material instanceof THREE.MeshStandardMaterial) {
                             mergedMesh.material.color.setHex(0xffffff);
                         }
-                        sceneHooks.addSkinnedMesh(mergedMesh);
+                        sceneApiRef.current?.insertObject(mergedMesh);
                         // Remove the original meshes
-                        sceneHooks.delSkinnedMesh(mergingMeshes[0]);
-                        sceneHooks.delSkinnedMesh(mergingMeshes[1]);
+                        sceneApiRef.current?.removeObject(mergingMeshes[0]);
+                        sceneApiRef.current?.removeObject(mergingMeshes[1]);
                         setShowMergeUI(false);
                         setMergingMeshes(null);
                     }}
