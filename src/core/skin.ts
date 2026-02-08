@@ -1,31 +1,11 @@
-const { Mesh } = require('@/lib/geometry/mesh');
 import { MeshData } from '@/interface';
 import { SkelData } from '@/interface';
-import * as LinearAlgebra from '@/lib/linalg/linear-algebra.js';
-
-const DenseMatrix = LinearAlgebra.DenseMatrix;
-const SparseMatrix = LinearAlgebra.SparseMatrix;
-const Triplet = LinearAlgebra.Triplet;
+import { buildLaplacianGeometry, diffuse } from '@/utils/solver';
 
 export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number[][] {
-    function vector(h) {
-        let a = mesh[0][h.vertex];
-        let b = mesh[0][h.next.vertex];
-
-        return b.minus(a);
-    }
-    function cotan(h) {
-        let u = vector(h.prev);
-        let v = vector(h.next).negated();
-
-        return u.dot(v) / u.cross(v).norm();
-    }
     let nV = mesh[0].length;
-    let meshObj = new Mesh();
-    meshObj.build({
-        v: mesh[0],
-        f: mesh[1].flat()
-    });
+    let lap = buildLaplacianGeometry(mesh);
+    let smoothness = -Math.log(5);
 
     let closest_dist = new Array(nV).fill(Infinity);
     let closest_bone = new Array(nV).fill(-1);
@@ -48,27 +28,14 @@ export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number
     });
 
     skel[1].forEach(([i0, i1], idx) => {
-        let T = new Triplet(nV, nV);
-        let B = DenseMatrix.zeros(nV, 1);
+        let weak: [number, number][] = [];
+        for (let j = 0; j < nV; j++)
+            weak.push([j, closest_bone[j] === idx ? 1 : 0]);
 
-        for (let j = 0; j < nV; j++) {
-            let coeff = 100 / closest_dist[j]**2;
-            T.addEntry(coeff, j, j);
-            B.set(closest_bone[j] === idx ? coeff : 0, j, 0);
-
-            for (let h of meshObj.vertices[j].adjacentHalfedges()) {
-                let k = h.next.vertex.index;
-                let w = (cotan(h) + cotan(h.twin))/2;
-
-                T.addEntry(-w, j, k);
-                T.addEntry(w, j, j);
-            }
-        }
-        let A = SparseMatrix.fromTriplet(T);
-        let w = A.chol().solvePositiveDefinite(B);
+        let result = diffuse(lap, weak, [], smoothness);
 
         for (let j = 0; j < nV; j++)
-            skin_weights[j][idx] = w.get(j, 0);
+            skin_weights[j][idx] = result.get(j);
     });
     return skin_weights;
 }
