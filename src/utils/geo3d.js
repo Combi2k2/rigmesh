@@ -1,9 +1,7 @@
 import * as LinearAlgebra from '@/lib/linalg/linear-algebra.js';
 import Queue from './misc';
+import { buildLaplacianTopology, smooth } from './solver';
 let Vector = LinearAlgebra.Vector;
-let DenseMatrix = LinearAlgebra.DenseMatrix;
-let SparseMatrix = LinearAlgebra.SparseMatrix;
-let Triplet = LinearAlgebra.Triplet;
 
 var Graph = require("graphlib").Graph;
 
@@ -121,48 +119,18 @@ export function runFaceOrientation(vertices, faces) {
     }
 }
 export function runLeastSquaresMesh(vertices, faces, constraints, factor = 1) {
-    let n = vertices.length;
-    let m = constraints.length;
-    let T = new Triplet(n+m, n);
+    let lap = buildLaplacianTopology([vertices, faces]);
+    let smoothness = Math.log(factor);
 
-    let deg = new Array(n).fill(0);
+    let results = ['x', 'y', 'z'].map(axis => {
+        let weak = constraints.map(j => [j, vertices[j][axis]]);
+        return smooth(lap, weak, [], smoothness);
+    });
 
-    for (let f of faces)
-    for (let v of f)
-        deg[v] += 2;
-
-    for (let i = 0; i < n; i++)
-        T.addEntry(factor, i, i);
-
-    for (let f of faces)
-    for (let i = 0; i < f.length; i++) {
-        let u = f[i];
-        let v = f[(i+1)%f.length];
-
-        T.addEntry(-factor/deg[u], u, v);
-        T.addEntry(-factor/deg[v], v, u);
-    }
-    for (let i = 0; i < m; i++)
-        T.addEntry(1, n+i, constraints[i]);
-
-    let A = SparseMatrix.fromTriplet(T);
-    let b = DenseMatrix.zeros(n+m, 3);
-    
-    for (let i = 0; i < m; i++) {
-        let j = constraints[i];
-        b.set(vertices[j].x, n+i, 0);
-        b.set(vertices[j].y, n+i, 1);
-        b.set(vertices[j].z, n+i, 2);
-    }
-    b = A.transpose().timesDense(b);
-    A = A.transpose().timesSparse(A);
-
-    let llt = A.chol();
-    let u = llt.solvePositiveDefinite(b);
-    for (let i = 0; i < n; i++) {
-        vertices[i].x = u.get(i, 0);
-        vertices[i].y = u.get(i, 1);
-        vertices[i].z = u.get(i, 2);
+    for (let i = 0; i < vertices.length; i++) {
+        vertices[i].x = results[0].get(i);
+        vertices[i].y = results[1].get(i);
+        vertices[i].z = results[2].get(i);
     }
 }
 export function runIsometricRemesh(vertices, faces, iterations = 6, length = -1) {
