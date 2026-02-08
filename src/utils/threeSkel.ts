@@ -1,6 +1,18 @@
 import * as THREE from 'three';
 import { SkelData } from '@/interface';
 
+export function traceMesh(result: THREE.SkinnedMesh | THREE.Bone | [THREE.Bone, THREE.Bone] | null): THREE.SkinnedMesh | null {
+    if (!result)    return null;
+    if (result instanceof THREE.SkinnedMesh)
+        return result;
+
+    let obj = Array.isArray(result) ? result[0] : result;
+    while (obj.parent && obj.isBone)
+        obj = obj.parent;
+    
+    return obj instanceof THREE.SkinnedMesh ? obj : null;
+}
+
 const _worldPosA = new THREE.Vector3();
 const _worldPosB = new THREE.Vector3();
 const _worldUp = new THREE.Vector3(0, 1, 0);
@@ -47,7 +59,7 @@ class SkeletonJoint extends THREE.Mesh {
         super(geometry, material);
 
         this.joint = bone;
-        (this as any).renderOrder = 1000;
+        (this as any).renderOrder = 1001;
     }
 
     updateMatrixWorld(force?: boolean) {
