@@ -3,7 +3,7 @@ import * as THREE from 'three';
 export * from './point';
 
 export type MeshData = [Vec3[], number[][]];
-export type SkelData = [Vec3[] | THREE.Bone[], [number, number][]];
+export type SkelData = [Vec3[], [number, number][]];
 
 export interface SkinnedMeshData {
     mesh: MeshData;
