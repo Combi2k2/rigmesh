@@ -1,9 +1,10 @@
 'use client';
 
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { useScene, SceneHooks } from '@/hooks/useScene';
+import { SceneHooks } from '@/hooks/useScene';
 import { MenuAction } from '@/interface';
 import SceneMenu, { MenuPosition } from './SceneMenu';
+import TemplateScene from '@/components/template/Scene';
 import { traceMesh } from '@/utils/threeSkel';
 import * as THREE from 'three';
 
@@ -15,177 +16,62 @@ export interface SceneProps {
 }
 
 /**
- * Main 3D Scene component for the main viewport
- *
- * Uses the useScene hook to initialize a 3D scene with camera, renderer, and controls.
- * Renders skinned meshes and handles click events for transformation and context menus.
+ * Main 3D Scene component for the main viewport.
+ * Uses the template Scene for the 3D view and adds context menu (SceneMenu) and menu action handling.
  */
 export default function Scene({
     onSceneReady,
     onMenuAction,
     className = 'w-full h-full',
-    style
+    style,
 }: SceneProps) {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const sceneApi = useScene(containerRef);
+    const sceneApiRef = useRef<SceneHooks | null>(null);
 
-    // Menu state
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
     const [selectedMeshes, setSelectedMeshes] = useState<THREE.SkinnedMesh[]>([]);
     const [mergeTargetMesh, setMergeTargetMesh] = useState<THREE.SkinnedMesh | null>(null);
 
-    // Keyboard shortcuts for transform mode (g/r/s)
-    useEffect(() => {
-        const handleKeyDown = (event: KeyboardEvent) => {
-            switch (event.key.toLowerCase()) {
-                case 'g':
-                    sceneApi.setMode('translate');
-                    break;
-                case 'r':
-                    sceneApi.setMode('rotate');
-                    break;
-                case 's':
-                    sceneApi.setMode('scale');
-                    break;
-            }
-        };
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [sceneApi]);
+    const handleSceneReady = useCallback(
+        (api: SceneHooks) => {
+            sceneApiRef.current = api;
+            onSceneReady?.(api);
+        },
+        [onSceneReady]
+    );
 
-    useEffect(() => {
-        if (onSceneReady) {
-            onSceneReady(sceneApi);
-        }
-    }, [onSceneReady, sceneApi]);
+    const handleContextMenu = useCallback((event: React.MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const api = sceneApiRef.current;
+        if (!api) return;
 
-    // Handle left click for transform controls
-    useEffect(() => {
-        const container = containerRef.current;
-        if (!container) return;
+        const result = api.raycast(event.clientX, event.clientY);
+        const mesh = traceMesh(result);
 
-        const canvas = container.querySelector('canvas');
-        if (!canvas) return;
-
-        const handleLeftClick = (event: MouseEvent) => {
-            if (event.button !== 0) return;
-
+        if (mesh) {
+            setSelectedMeshes([mesh]);
+            setMenuPosition({ x: event.clientX, y: event.clientY });
+            setIsMenuOpen(true);
+        } else {
             setIsMenuOpen(false);
             setMenuPosition(null);
-
-            const result = sceneApi.raycast(event.clientX, event.clientY);
-            const mesh = traceMesh(result);
-            const bone: THREE.Bone | null =
-                result && !(result instanceof THREE.SkinnedMesh)
-                    ? (Array.isArray(result) ? result[0] : (result as THREE.Bone))
-                    : null;
-
-            if (mesh) {
-                if (bone) {
-                    sceneApi.setSpace('local');
-                    sceneApi.attach(bone);
-
-                    const boneIndex = mesh.skeleton.bones.indexOf(bone);
-                    const skinIndices = mesh.geometry.getAttribute('skinIndex') as THREE.BufferAttribute;
-                    const skinWeights = mesh.geometry.getAttribute('skinWeight') as THREE.BufferAttribute;
-
-                    const nV = skinIndices.count;
-                    const colors = new Float32Array(nV * 3);
-
-                    for (let i = 0; i < nV; i++) {
-                        let influence = 0;
-
-                        for (let j = 0; j < 4; j++) {
-                            const idx = skinIndices.getComponent(i, j);
-                            if (idx === boneIndex) {
-                                influence = skinWeights.getComponent(i, j);
-                                break;
-                            }
-                        }
-                        colors[i * 3 + 0] = influence;
-                        colors[i * 3 + 1] = 0;
-                        colors[i * 3 + 2] = 1 - influence;
-                    }
-                    mesh.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-
-                    const mat = mesh.material as THREE.MeshStandardMaterial;
-                    mat.vertexColors = true;
-                    mat.needsUpdate = true;
-                } else {
-                    sceneApi.setSpace('world');
-                    sceneApi.attach(mesh);
-
-                    if (mesh.geometry.getAttribute('color'))
-                        mesh.geometry.deleteAttribute('color');
-
-                    const mat = mesh.material as THREE.MeshStandardMaterial;
-                    mat.vertexColors = false;
-                    mat.needsUpdate = true;
-                }
-            } else {
-                sceneApi.detach();
-                setSelectedMeshes([]);
-            }
-        };
-
-        canvas.addEventListener('mousedown', handleLeftClick);
-        return () => canvas.removeEventListener('mousedown', handleLeftClick);
-    }, [sceneApi]);
-
-    // Handle right click for context menu
-    useEffect(() => {
-        const container = containerRef.current;
-        if (!container) return;
-
-        const canvas = container.querySelector('canvas');
-        if (!canvas) return;
-
-        const handleContextMenu = (event: MouseEvent) => {
-            event.preventDefault();
-            event.stopPropagation();
-
-            const result = sceneApi.raycast(event.clientX, event.clientY);
-            const mesh = traceMesh(result);
-
-            if (mesh) {
-                setSelectedMeshes([mesh]);
-                setMenuPosition({
-                    x: event.clientX,
-                    y: event.clientY
-                });
-                setIsMenuOpen(true);
-            } else {
-                setIsMenuOpen(false);
-                setMenuPosition(null);
-                setSelectedMeshes([]);
-            }
-        };
-
-        canvas.addEventListener('contextmenu', handleContextMenu);
-        return () => canvas.removeEventListener('contextmenu', handleContextMenu);
-    }, [sceneApi]);
+            setSelectedMeshes([]);
+        }
+    }, []);
 
     const handleMenuAction = useCallback((action: MenuAction, meshes: THREE.SkinnedMesh[]) => {
         if (action === 'merge' && mergeTargetMesh && meshes.length > 0) {
-            if (onMenuAction) {
-                onMenuAction(action, [mergeTargetMesh, meshes[0]]);
-            }
+            onMenuAction?.(action, [mergeTargetMesh, meshes[0]]);
             setMergeTargetMesh(null);
         } else {
-            if (onMenuAction) {
-                onMenuAction(action, meshes);
-            }
-            if (action !== 'merge') {
-                setMergeTargetMesh(null);
-            }
+            onMenuAction?.(action, meshes);
+            if (action !== 'merge') setMergeTargetMesh(null);
         }
     }, [onMenuAction, mergeTargetMesh]);
 
     const handleSelectForMerge = useCallback((meshes: THREE.SkinnedMesh[]) => {
-        if (meshes.length > 0) {
-            setMergeTargetMesh(meshes[0]);
-        }
+        if (meshes.length > 0) setMergeTargetMesh(meshes[0]);
     }, []);
 
     const handleMenuClose = useCallback(() => {
@@ -193,9 +79,22 @@ export default function Scene({
         setMenuPosition(null);
     }, []);
 
+    const handlePointerDown = useCallback((e: React.MouseEvent) => {
+        if (e.button === 0) {
+            setIsMenuOpen(false);
+            setMenuPosition(null);
+        }
+    }, []);
+
     return (
         <>
-            <div ref={containerRef} className={className} style={style} />
+            <div className={className} style={style} onContextMenu={handleContextMenu} onMouseDown={handlePointerDown}>
+                <TemplateScene
+                    enableRig
+                    enableTransform
+                    onSceneReady={handleSceneReady}
+                />
+            </div>
             <SceneMenu
                 isOpen={isMenuOpen}
                 position={menuPosition}
