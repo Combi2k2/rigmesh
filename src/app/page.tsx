@@ -6,7 +6,7 @@ import { SceneHooks } from '@/hooks/useScene';
 import MeshGenUI from '@/components/meshgenUI/MeshGenUI';
 import Scene from '@/components/main/Scene';
 import Canvas from '@/components/canvas';
-import { MeshCutUI } from '@/components/meshcutUI';
+import MeshCutUI from '@/components/MeshCutUI';
 import { MeshMergeUI } from '@/components/meshmergeUI';
 import { computeSkinWeightsGlobal } from '@/core/skin';
 import { skinnedMeshFromData } from '@/utils/threeMesh';
@@ -74,6 +74,23 @@ export default function Page() {
     const handleSceneReady = useCallback((api: SceneHooks) => {
         sceneApiRef.current = api;
         setIsSceneReady(true);
+    }, []);
+
+    const handleMeshCutComplete = useCallback((meshes: THREE.SkinnedMesh[]) => {
+        meshes.forEach((mesh) => {
+            if (mesh.material instanceof THREE.MeshStandardMaterial) {
+                mesh.material.color.setHex(0xffffff);
+            }
+            sceneApiRef.current?.insertObject(mesh);
+        });
+        if (cuttingMesh) sceneApiRef.current?.removeObject(cuttingMesh);
+        setShowCutUI(false);
+        setCuttingMesh(null);
+    }, [cuttingMesh]);
+
+    const handleMeshCutCancel = useCallback(() => {
+        setShowCutUI(false);
+        setCuttingMesh(null);
     }, []);
 
     const handleMenuAction = useCallback(
@@ -232,24 +249,8 @@ export default function Page() {
             {showCutUI && cuttingMesh && (
                 <MeshCutUI
                     skinnedMesh={cuttingMesh}
-                    onComplete={(meshes) => {
-                        // Add the result meshes to the scene (already THREE.SkinnedMesh)
-                        meshes.forEach(mesh => {
-                            // Reset color to white before adding to main scene
-                            if (mesh.material instanceof THREE.MeshStandardMaterial) {
-                                mesh.material.color.setHex(0xffffff);
-                            }
-                            sceneApiRef.current?.insertObject(mesh);
-                        });
-                        // Remove the original mesh
-                        sceneApiRef.current?.removeObject(cuttingMesh);
-                        setShowCutUI(false);
-                        setCuttingMesh(null);
-                    }}
-                    onCancel={() => {
-                        setShowCutUI(false);
-                        setCuttingMesh(null);
-                    }}
+                    onComplete={handleMeshCutComplete}
+                    onCancel={handleMeshCutCancel}
                 />
             )}
 
