@@ -15,16 +15,16 @@ export type RaycastResult = THREE.SkinnedMesh | THREE.Bone | [THREE.Bone, THREE.
  * Return type of useScene.
  *
  * - **insertObject** – Add an object to the scene.
- * - **removeObject** – Remove an object from the scene. Disposes geometry and material when the object is a Mesh.
- * - **raycast** – Pick objects from client coordinates (e.g. event.clientX, event.clientY). Returns an array of intersections.
- * - **attach** – Attach the transform controls to an object.
- * - **detach** – Detach the transform controls.
- * - **setSpace** – Set transform space to 'world' or 'local'.
- * - **setMode** – Set transform mode to 'translate', 'rotate', or 'scale'.
+ * - **removeObject** – Remove an object from the scene. Disposes geometry/material.
+ * - **getCamera** – Get the current perspective camera (for cut plane, etc.).
+ * - **getCanvas** – Get the renderer canvas element (for overlays, hit testing).
+ * - **raycast** / **attach** / **detach** / **setSpace** / **setMode** – Transform controls.
  */
 export interface SceneHooks {
     insertObject: (obj: THREE.Object3D) => void;
     removeObject: (obj: THREE.Object3D) => void;
+    getCamera: () => THREE.PerspectiveCamera | null;
+    getCanvas: () => HTMLCanvasElement | null;
     raycast: (clientX: number, clientY: number) => RaycastResult;
     attach: (obj: THREE.Object3D) => void;
     detach: () => void;
@@ -93,11 +93,10 @@ export function useScene(containerRef: RefObject<HTMLDivElement>): SceneHooks {
             }
         }
         sceneRef.current.remove(obj);
-        if (obj instanceof THREE.Mesh) {
-            obj.geometry?.dispose();
-            obj.material?.dispose();
-        }
     }, []);
+
+    const getCamera = useCallback(() => cameraRef.current, []);
+    const getCanvas = useCallback(() => rendererRef.current?.domElement ?? null, []);
 
     const raycast = useCallback((clientX: number, clientY: number): RaycastResult => {
         const renderer = rendererRef.current;
@@ -303,6 +302,8 @@ export function useScene(containerRef: RefObject<HTMLDivElement>): SceneHooks {
     return {
         insertObject,
         removeObject,
+        getCamera,
+        getCanvas,
         raycast,
         attach,
         detach,
