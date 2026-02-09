@@ -1,11 +1,15 @@
 import { MeshData } from '@/interface';
 import { SkelData } from '@/interface';
-import { buildLaplacianGeometry, diffuse } from '@/utils/solver';
+import { buildLaplacianGeometry } from '@/utils/solver';
+
+import * as LinearAlgebra from '@/lib/linalg/linear-algebra.js';
+const DenseMatrix = LinearAlgebra.DenseMatrix;
+const SparseMatrix = LinearAlgebra.SparseMatrix;
+const Triplet = LinearAlgebra.Triplet;
 
 export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number[][] {
     let nV = mesh[0].length;
     let lap = buildLaplacianGeometry(mesh);
-    let smoothness = -Math.log(5);
 
     let closest_dist = new Array(nV).fill(Infinity);
     let closest_bone = new Array(nV).fill(-1);
@@ -26,16 +30,25 @@ export function computeSkinWeightsGlobal(mesh: MeshData, skel: SkelData): number
             }
         });
     });
+    let T = new Triplet(nV, nV);
+    let b = DenseMatrix.zeros(nV, 1);
 
-    skel[1].forEach(([i0, i1], idx) => {
-        let weak: [number, number][] = [];
-        for (let j = 0; j < nV; j++)
-            weak.push([j, closest_bone[j] === idx ? 1 : 0]);
+    for (let [w, i, j] of lap)  T.addEntry(w, i, j);
+    for (let i = 0; i < nV; i++)    {
+        let coeff = 100 / closest_dist[i]**2;
+        T.addEntry(coeff, i, i);
+    }
+    let A = SparseMatrix.fromTriplet(T);
+    let F = A.chol();
 
-        let result = diffuse(lap, weak, [], smoothness);
-
-        for (let j = 0; j < nV; j++)
-            skin_weights[j][idx] = result.get(j);
+    skel[1].forEach((_, idx) => {
+        for (let i = 0; i < nV; i++) {
+            let coeff = 100 / closest_dist[i]**2;
+            b.set(closest_bone[i] === idx ? coeff : 0, i);
+        }
+        let w = F.solvePositiveDefinite(b);
+        for (let i = 0; i < nV; i++)
+            skin_weights[i][idx] = w.get(i);
     });
     return skin_weights;
 }
