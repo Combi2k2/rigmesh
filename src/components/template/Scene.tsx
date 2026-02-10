@@ -98,8 +98,10 @@ export default function Scene({
 
                 for (let i = 0; i < nV; i++) {
                     const wgt = mesh.userData.boneSkinWeights[i];
-                    const sum = wgt.reduce((a, b) => a + b, 0);
-                    weight[i] = wgt[index] / sum;
+                    const sum = wgt?.reduce((a, b) => a + b, 0) || 0;
+                    const idx = mesh.userData.boneSkinIndices[i].indexOf(index);
+                    if (idx >= 0 && sum > 0)
+                        weight[i] = wgt[idx] / sum;
                 }
             }
             for (let i = 0; i < nV; i++) {
