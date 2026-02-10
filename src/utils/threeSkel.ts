@@ -120,12 +120,14 @@ export function createSkeleton(data: THREE.SkinnedMesh | THREE.Skeleton | SkelDa
             const [geometry, material] = createSphere(5);
             const sphere = new THREE.Mesh(geometry, material);
             sphere.position.set(joint.x, joint.y, joint.z);
+            sphere.renderOrder = 1001;
             group.add(sphere);
         });
         data[1].forEach(([i0, i1]) => {
             const [geometry, material] = createCylinder(1);
             const cylinder = new THREE.Mesh(geometry, material);
             updateCylinder(cylinder, data[0][i0], data[0][i1]);
+            cylinder.renderOrder = 1000;
             group.add(cylinder);
         });
     }
