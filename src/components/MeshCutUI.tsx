@@ -106,6 +106,10 @@ export default function MeshCutUI({
                     const line: ScreenLine = [ndc1, ndc2];
                     const plane = computeCutPlaneFromScreenLine(line, cameraRef.current);
                     flowApi.onCutReady(plane);
+                    flowApi.state.resultRef.current.forEach(mesh => {
+                        sceneRef.current.insertObject(mesh);
+                    });
+                    sceneRef.current.removeObject(cloneRef.current);
 
                     setIsDrawing(false);
                     setIsDragging(false);
@@ -122,16 +126,6 @@ export default function MeshCutUI({
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [ready, flowApi.state.currentStep, point1, point2]);
-
-    useEffect(() => {
-        if (!ready) return;
-        if (!flowApi.state.resultRef.current)
-            return;
-        sceneRef.current.removeObject(cloneRef.current);
-        flowApi.state.resultRef.current?.forEach((mesh) => {
-            sceneRef.current.insertObject(mesh);
-        });
-    }, [ready, flowApi.state.resultRef.current]);
 
     useControls('Step 1: Draw Cut Line', {}, {collapsed: flowApi.state.currentStep !== 1});
     useControls('Step 2: Mesh Stitch', {}, {collapsed: flowApi.state.currentStep !== 2});
