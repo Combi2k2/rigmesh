@@ -5,6 +5,39 @@ let Vector = LinearAlgebra.Vector;
 
 var Graph = require("graphlib").Graph;
 
+const EPS = 1e-8;
+
+/**
+ * Möller–Trumbore ray-triangle intersection.
+ * @param {Vector} rayOrigin - Ray origin point
+ * @param {Vector} rayDir - Ray direction (need not be unit)
+ * @param {Vector} v0 - Triangle vertex 0
+ * @param {Vector} v1 - Triangle vertex 1
+ * @param {Vector} v2 - Triangle vertex 2
+ * @returns {{ t: number, u: number, v: number } | null} Hit with barycentric u,v and distance t, or null if no hit
+ */
+export function rayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2) {
+    let edge1 = v1.minus(v0);
+    let edge2 = v2.minus(v0);
+    let h = rayDir.cross(edge2);
+    let a = edge1.dot(h);
+    if (Math.abs(a) < EPS)
+        return null;
+    let f = 1 / a;
+    let s = rayOrigin.minus(v0);
+    let u = f * s.dot(h);
+    if (u < -EPS || u > 1 + EPS)
+        return null;
+    let q = s.cross(edge1);
+    let v = f * rayDir.dot(q);
+    if (v < -EPS || u + v > 1 + EPS)
+        return null;
+    let t = f * edge2.dot(q);
+    if (t <= EPS)
+        return null;
+    return { t, u, v };
+}
+
 export function runLaplacianSmooth(quantity, fixedIndices, connectivity, alpha) {
     let n = quantity.length;
     let lap = new Array(n).fill(new Vector(0, 0, 0));
@@ -38,30 +71,9 @@ export function runFaceOrientation(vertices, faces) {
         let v0 = vertices[faces[i][0]];
         let v1 = vertices[faces[i][1]];
         let v2 = vertices[faces[i][2]];
-        
-        // Moller-Trumbore ray-triangle intersection
-        let edge1 = v1.minus(v0);
-        let edge2 = v2.minus(v0);
-        let s = origin.minus(v0);
-        let r_cross_e2 = raydir.cross(edge2);
-        let s_cross_e1 = s.cross(edge1);
-
-        let det = edge1.dot(r_cross_e2);
-        if (Math.abs(det) < 1e-6)
-            continue;
-
-        let u = r_cross_e2.dot(s) / det;
-        let v = s_cross_e1.dot(raydir) / det;
-        let t = edge2.dot(s_cross_e1) / det;
-
-        if (u < -1e-6)  continue;
-        if (v < -1e-6)  continue;
-        if (u + v > 1 + 1e-6)
-            continue;
-
-        if (t > 1e-6) {
+        let hit = rayTriangleIntersect(origin, raydir, v0, v1, v2);
+        if (hit && hit.t > 1e-6)
             inward = !inward;
-        }
     }
     if (inward) {
         faces[0] = faces[0].reverse();
