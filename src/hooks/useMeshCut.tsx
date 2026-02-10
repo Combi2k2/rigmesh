@@ -32,10 +32,13 @@ export function useMeshCut(onCutComplete?: (meshes: THREE.SkinnedMesh[]) => void
     const processStep2 = useCallback(() => {
         if (!cutterRef.current) return;
         if (!resultRef.current) return;
-        resultRef.current.forEach(mesh => cutterRef.current.runMeshPatch(mesh));
+        resultRef.current.forEach(mesh => cutterRef.current.runMeshStitch(mesh));
     }, []);
 
     const processStep3 = useCallback(() => {
+        if (!cutterRef.current) return;
+        if (!resultRef.current) return;
+        resultRef.current.forEach(mesh => cutterRef.current.runMeshSmooth(mesh, smoothLayers, smoothFactor));
     }, [smoothLayers, smoothFactor]);
 
     const processStep4 = useCallback(() => {
