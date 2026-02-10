@@ -15,6 +15,12 @@ export interface SkinnedMeshData {
 export interface Plane {
     normal: Vec3;
     offset: number;
-};
+}
+
+export interface Frame {
+    origin: Vec3;
+    basisU: Vec3;
+    basisV: Vec3;
+}
 
 export type MenuAction = 'copy' | 'delete' | 'rig' | 'cut' | 'merge';
