@@ -403,7 +403,7 @@ export class MeshCut {
         } else {
             patches[0].userData.V = [...V];
         }
-        
+
         for (let i = 0; i < baseF; i++) {
             let [i0, i1, i2] = F[i];
             g.setEdge(i0, i1);
@@ -500,5 +500,25 @@ export class MeshCut {
         mesh.geometry = newMesh.geometry;
         mesh.bind(mesh.skeleton);
         setSkinWeights(mesh, skinWeights, skinIndices);
+    }
+    public computeSkinWeights(mesh: THREE.SkinnedMesh) {
+        const patches = mesh.children.filter(child => child.userData?.isPatch);
+        const data = skinnedMeshToData(mesh);
+
+        for (let patch of patches) {
+            const lap = buildLaplacianGeometry([data.mesh[0], patch.userData.faces]);
+            const loop = patch.userData.loop;
+
+            for (let i = 0; i < data.skel[1].length; i++) {
+                const constraints: [number, number][] = loop.map(j => [j, data.skinWeights[j][i]]);
+                const result = diffuse(lap, [], constraints, 1);
+
+                for (let [j, w] of result) {
+                    data.skinWeights[j].push(w);
+                    data.skinIndices[j].push(i);
+                }
+            }
+        }
+        setSkinWeights(mesh, data.skinWeights, data.skinIndices);
     }
 }
