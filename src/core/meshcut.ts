@@ -8,6 +8,12 @@ import { Vec2, Vec3, Plane, Frame } from '@/interface';
 import { skinnedMeshFromData } from '@/utils/threeMesh';
 import { skinnedMeshToData } from '@/utils/threeMesh';
 import { extractMeshData } from '@/utils/threeMesh';
+import { setSkinWeights } from '@/utils/threeMesh';
+import { getSkinWeights } from '@/utils/threeMesh';
+import { buildMesh } from '@/utils/threeMesh';
+import { buildLaplacianTopology, smooth } from '@/utils/solver';
+import { buildLaplacianGeometry, diffuse } from '@/utils/solver';
+import Queue from '@/utils/misc';
 import * as geo2d from '@/utils/geo2d';
 import * as THREE from 'three';
 
@@ -279,7 +285,7 @@ export class MeshCut {
         });
         return newMeshes;
     }
-    public runMeshPatch(mesh: THREE.SkinnedMesh) {
+    public runMeshStitch(mesh: THREE.SkinnedMesh) {
         const V = [], F = [];
         const posAttr = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
         const idxAttr = mesh.geometry.getIndex();
@@ -350,7 +356,7 @@ export class MeshCut {
             const positions = new Float32Array(points.length * 3);
 
             points.forEach((p, i) => {
-                const v = i < polygon.length ? V[loop[i]] : projectTo3D(new Vec2(...p), frame);
+                const v = i < loop.length ? V[loop[i]] : projectTo3D(new Vec2(...p), frame);
                 positions[i*3+0] = v.x;
                 positions[i*3+1] = v.y;
                 positions[i*3+2] = v.z;
@@ -364,7 +370,135 @@ export class MeshCut {
             material.color.set(0x008800);
 
             const patch = new THREE.Mesh(geometry, material);
+            patch.userData.loop = loop;
+            patch.userData.isPatch = true;
             mesh.add(patch);
         }
+    }
+    public runMeshSmooth(mesh: THREE.SkinnedMesh, smoothLayers: number, smoothFactor: number) {
+        let [V, F] = extractMeshData(mesh);
+        const { skinWeights, skinIndices } = getSkinWeights(mesh);
+        const g = new graphlib.Graph();
+        let baseV = V.length;
+        let baseF = F.length;
+        const patches = mesh.children.filter(child => child.userData?.isPatch);
+
+        mesh.updateMatrixWorld(true);
+        const worldMatrix = mesh.matrixWorld.clone();
+        const worldMatrixInverse = worldMatrix.clone().invert();
+
+        const transform = (v: Vec3, matrix: THREE.Matrix4): Vec3 => {
+            const vec = new THREE.Vector3(v.x, v.y, v.z);
+            vec.applyMatrix4(matrix);
+            return new Vec3(vec.x, vec.y, vec.z);
+        };
+
+        for (let i = 0; i < baseV; i++) 
+            V[i] = transform(V[i], worldMatrixInverse);
+
+        if (!patches[0].visible) {
+            V = patches[0].userData.V;
+            baseV = patches[0].userData.baseV;
+            baseF = patches[0].userData.baseF;
+        } else {
+            patches[0].userData.V = [...V];
+        }
+        
+        for (let i = 0; i < baseF; i++) {
+            let [i0, i1, i2] = F[i];
+            g.setEdge(i0, i1);
+            g.setEdge(i1, i2);
+            g.setEdge(i2, i0);
+        }
+        for (let patch of patches) {
+            const [Vp, Fp] = extractMeshData(patch);
+            for (let i = 0; i < Vp.length; i++) 
+                Vp[i] = transform(Vp[i], worldMatrixInverse);
+
+            const layers = [patch.userData.loop];
+            const faces = [];
+
+            if (!patch.visible) {
+                patch.userData.faces.forEach(f => faces.push(f));
+            } else {
+                for (let i = 0; i < Vp.length; i++)
+                    if (i >= layers[0].length) {
+                        V.push(Vp[i]);
+                        skinWeights.push([]);
+                        skinIndices.push([]);
+                    }
+                for (let f of Fp) {
+                    const face = [];
+                    for (let v of f) {
+                        if (v < layers[0].length)
+                            face.push(layers[0][v]);
+                        else
+                            face.push(baseV + v - layers[0].length);
+                    }
+                    F.push(face);
+                    faces.push(face);
+                }
+                patch.userData.baseF = baseF;
+                patch.userData.baseV = baseV;
+                patch.userData.faces = [...faces];
+                patch.visible = false;
+            }
+            const visit = new Array(baseV).fill(false);
+            const queue = new Queue();
+            layers[0].forEach(x => {
+                queue.push(x)
+                visit[x] = true;
+            });
+
+            for (let i = 0; i < smoothLayers; i++) {
+                let size = queue.size();
+                let layer = [];
+                while (size > 0) {
+                    size--;
+                    let x = queue.pop();
+
+                    for (let e of g.outEdges(x)) {
+                        let y = Number(e.w);
+                        if (y < baseV && !visit[y]) {
+                            queue.push(y);
+                            layer.push(y);
+                            visit[y] = true;
+                        }
+                    }
+                }
+                if (layer.length > 0)
+                    layers.push(layer);
+            }
+            for (let i = 0; i < baseF; i++) {
+                let [i0, i1, i2] = F[i];
+                if (visit[i0] && visit[i1] && visit[i2])
+                    faces.push(F[i]);
+            }
+
+            const lap = buildLaplacianTopology([[], faces]);
+
+            const outestLayer = layers[layers.length - 1];
+            const hard_constraints_x: [number, number][] = outestLayer.map(i => [i, V[i].x]);
+            const hard_constraints_y: [number, number][] = outestLayer.map(i => [i, V[i].y]);
+            const hard_constraints_z: [number, number][] = outestLayer.map(i => [i, V[i].z]);
+
+            const innerLayers = layers.slice(0, layers.length - 1).flat();
+            const weak_constraints_x: [number, number][] = innerLayers.map(i => [i, V[i].x]);
+            const weak_constraints_y: [number, number][] = innerLayers.map(i => [i, V[i].y]);
+            const weak_constraints_z: [number, number][] = innerLayers.map(i => [i, V[i].z]);
+
+            const resX = smooth(lap, weak_constraints_x, hard_constraints_x, smoothFactor);
+            const resY = smooth(lap, weak_constraints_y, hard_constraints_y, smoothFactor);
+            const resZ = smooth(lap, weak_constraints_z, hard_constraints_z, smoothFactor);
+
+            for (const [i, _] of resX)
+                V[i] = new Vec3(resX.get(i)!, resY.get(i)!, resZ.get(i)!);
+        }
+        const newMesh = buildMesh([V, F], false);
+        newMesh.material.dispose();
+        mesh.geometry.dispose();
+        mesh.geometry = newMesh.geometry;
+        mesh.bind(mesh.skeleton);
+        setSkinWeights(mesh, skinWeights, skinIndices);
     }
 }
