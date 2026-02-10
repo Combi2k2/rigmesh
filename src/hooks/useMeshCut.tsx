@@ -42,6 +42,9 @@ export function useMeshCut(onCutComplete?: (meshes: THREE.SkinnedMesh[]) => void
     }, [smoothLayers, smoothFactor]);
 
     const processStep4 = useCallback(() => {
+        if (!cutterRef.current) return;
+        if (!resultRef.current) return;
+        resultRef.current.forEach(mesh => cutterRef.current.computeSkinWeights(mesh));
     }, []);
 
     const onMeshReady = useCallback((mesh: THREE.SkinnedMesh) => {
