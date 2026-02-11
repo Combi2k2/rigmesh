@@ -11,11 +11,16 @@
 
 import { Vec3, SkinnedMeshData } from '@/interface';
 import { MeshData } from '@/interface';
-import { SkelData } from '@/interface';
-import { skinnedMeshFromData, skinnedMeshToData } from '@/utils/threeMesh';
+import { skinnedMeshFromData } from '@/utils/threeMesh';
+import { skinnedMeshToData } from '@/utils/threeMesh';
+import { buildMesh } from '@/utils/threeMesh';
 import * as THREE from 'three';
 import * as geo3d from '@/utils/geo3d';
 import * as skin from '@/core/skin';
+import * as topo from '@/utils/topo';
+
+import { buildLaplacianTopology, smooth } from '@/utils/solver';
+import { buildLaplacianGeometry, diffuse } from '@/utils/solver';
 
 var graphlib = require("graphlib");
 
@@ -124,39 +129,6 @@ function generateSlice(loop1: Vec3[], loop2: Vec3[]): number[][] {
     return faces;
 }
 
-/**
- * Find the closest pair of boundary loops between two meshes.
- */
-function findClosestLoopPair(
-    loops1: { vertices: Vec3[], indices: number[] }[],
-    loops2: { vertices: Vec3[], indices: number[] }[]
-): [number, number] {
-    let minDist = Infinity;
-    let bestPair: [number, number] = [0, 0];
-
-    for (let i = 0; i < loops1.length; i++) {
-        const centroid1 = loops1[i].vertices.reduce(
-            (acc, v) => acc.plus(v),
-            new Vec3(0, 0, 0)
-        ).over(loops1[i].vertices.length);
-
-        for (let j = 0; j < loops2.length; j++) {
-            const centroid2 = loops2[j].vertices.reduce(
-                (acc, v) => acc.plus(v),
-                new Vec3(0, 0, 0)
-            ).over(loops2[j].vertices.length);
-
-            const dist = centroid1.minus(centroid2).norm();
-            if (dist < minDist) {
-                minDist = dist;
-                bestPair = [i, j];
-            }
-        }
-    }
-
-    return bestPair;
-}
-
 export type MergeType = 'snap' | 'split' | 'connect';
 export interface MergeParams {
     type: 'snap' | 'split' | 'connect';
@@ -219,17 +191,26 @@ export class MeshMerge {
         this.data1.mesh[0].forEach((v, i) => { if (!toRemove1[i]) V.push(v), idxMap1.set(i, offset++); });
         this.data2.mesh[0].forEach((v, i) => { if (!toRemove2[i]) V.push(v), idxMap2.set(i, offset++); });
 
+        const g1 = new graphlib.Graph();
+        const g2 = new graphlib.Graph();
+
         this.data1.mesh[1].forEach(([i0, i1, i2], _) => {
             if (toRemove1[i0]) return;
             if (toRemove1[i1]) return;
             if (toRemove1[i2]) return;
             F.push([idxMap1.get(i0), idxMap1.get(i1), idxMap1.get(i2)]);
+            g1.setEdge(idxMap1.get(i0), idxMap1.get(i1));
+            g1.setEdge(idxMap1.get(i1), idxMap1.get(i2));
+            g1.setEdge(idxMap1.get(i2), idxMap1.get(i0));
         });
         this.data2.mesh[1].forEach(([i0, i1, i2], _) => {
             if (toRemove2[i0]) return;
             if (toRemove2[i1]) return;
             if (toRemove2[i2]) return;
             F.push([idxMap2.get(i0), idxMap2.get(i1), idxMap2.get(i2)]);
+            g2.setEdge(idxMap2.get(i0), idxMap2.get(i1));
+            g2.setEdge(idxMap2.get(i1), idxMap2.get(i2));
+            g2.setEdge(idxMap2.get(i2), idxMap2.get(i0));
         });
 
         const n1 = this.data1.skel[0].length;
@@ -268,11 +249,160 @@ export class MeshMerge {
             mergedSkinIndices[newIdx] = k.map(b => b + boneOffset);
         }
 
-        return skinnedMeshFromData({
+        const mesh = skinnedMeshFromData({
             mesh: [V, F],
             skel: [J, B],
             skinWeights: mergedSkinWeights,
             skinIndices: mergedSkinIndices
         });
+
+        mesh.userData.loops1 = topo.extraceBoundaryLoops(g1);
+        mesh.userData.loops2 = topo.extraceBoundaryLoops(g2);
+
+        return mesh;
+    }
+    public runMeshStitch(mesh: THREE.SkinnedMesh) {
+        const posAttr = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+        const posArray: Vec3[] = [];
+
+        for (let i = 0; i < posAttr.count; i++) {
+            let pos = new THREE.Vector3();
+    
+            pos.fromBufferAttribute(posAttr, i);
+            posArray.push(new Vec3(pos.x, pos.y, pos.z));
+        }
+        
+        const loops1: number[][] = mesh.userData.loops1;
+        const loops2: number[][] = mesh.userData.loops2;
+
+        if (loops1.length !== loops2.length) {
+            console.warn("Number of boundary loops are not equal");
+            return;
+        }
+        const n = loops1.length;
+        const centroids1 = loops1.map(loop => loop.reduce((acc, i) => acc.plus(posArray[i]), new Vec3(0, 0, 0)).over(loop.length));
+        const centroids2 = loops2.map(loop => loop.reduce((acc, i) => acc.plus(posArray[i]), new Vec3(0, 0, 0)).over(loop.length));
+        
+        const pairs: [number, number][] = [];
+        const paired1 = new Array(n).fill(false);
+        const paired2 = new Array(n).fill(false);
+
+        while (pairs.length < n) {
+            let minDist = Infinity;
+            let bestPair: [number, number] = [0, 0];
+            for (let i = 0; i < n; i++) if (!paired1[i])
+            for (let j = 0; j < n; j++) if (!paired2[j]) {
+                const c1 = centroids1[i];
+                const c2 = centroids2[j];
+                const dist = c1.minus(c2).norm();
+                if (minDist > dist) {
+                    minDist = dist;
+                    bestPair = [i, j];
+                }
+            }
+            pairs.push(bestPair);
+            paired1[bestPair[0]] = true;
+            paired2[bestPair[1]] = true;
+        }
+
+        for (const [i, j] of pairs) {
+            const loop1V = loops1[i].map(idx => posArray[idx]);
+            const loop2V = loops2[j].map(idx => posArray[idx]);
+            const face_patch = generateSlice(loop1V, loop2V);
+            const face_final: number[][] = [];
+            face_patch.forEach(f => {
+                const face: number[] = [];
+                for (const v of f) {
+                    if (v < loop1V.length)  face.push(loops1[i][v]);
+                    else                    face.push(loops2[j][v - loop1V.length]);
+                }
+                face_final.push(face);
+            });
+
+            const patch = buildMesh([[...loop1V, ...loop2V], face_patch], false);
+            patch.userData.faces = face_final;
+            patch.userData.isPatch = true;
+            patch.material.color.set(0x008800);
+            mesh.add(patch);
+        }
+    }
+    public runMeshSmooth(mesh: THREE.SkinnedMesh, smoothLayers: number, smoothFactor: number) {
+        const posAttr = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+        const idxAttr = mesh.geometry.getIndex();
+        let topoG = null;
+        let source = [];
+
+        if (!mesh.userData?.patched) {
+            mesh.userData.patched = true;
+            const patches = mesh.children.filter(child => child.userData?.isPatch);
+            const faces = [];
+            const sourceSet = new Set<number>();
+            topoG = new graphlib.Graph();
+            
+            for (let i = 0; i < idxAttr.count; i += 3) {
+                const i0 = idxAttr.getX(i);
+                const i1 = idxAttr.getX(i + 1);
+                const i2 = idxAttr.getX(i + 2);
+                faces.push([i0, i1, i2]);
+            }
+            for (const patch of patches) {
+                patch.userData.faces.forEach(([i0, i1, i2]) => {
+                    sourceSet.add(i0);
+                    sourceSet.add(i1);
+                    sourceSet.add(i2);
+                    faces.push([i0, i1, i2]);
+                });
+                patch.geometry?.dispose();
+                patch.material?.dispose();
+                mesh.remove(patch);
+            }
+            source = [...sourceSet];
+            faces.forEach(([i0, i1, i2]) => {
+                topoG.setEdge(i0, i1, i2);
+                topoG.setEdge(i1, i2, i0);
+                topoG.setEdge(i2, i0, i1);
+            });
+            mesh.userData.topoG = topoG;
+            mesh.userData.source = source;
+            mesh.geometry.setIndex(faces.flat());
+        } else {
+            topoG = mesh.userData.topoG;
+            source = mesh.userData.source;
+        }
+        const [interior, boundary] = topo.expand(topoG, source, smoothLayers);
+
+        const local_region = new Set<number>([...boundary, ...interior]);
+        const local_faces = [];
+
+        local_region.forEach(x => {
+            for (const e of topoG.outEdges(x)) {
+                const y = Number(e.w);
+                const z = topoG.edge(x, y);
+
+                if (!local_region.has(y))   continue;
+                if (!local_region.has(z))   continue;
+
+                if (x < y && x < z)
+                    local_faces.push([x, y, z]);
+            }
+        });
+        const local_lap = buildLaplacianTopology([[], local_faces]);
+
+        const hardX = boundary.map((i) => [i, posAttr.getX(i)] as [number, number]);
+        const hardY = boundary.map((i) => [i, posAttr.getY(i)] as [number, number]);
+        const hardZ = boundary.map((i) => [i, posAttr.getZ(i)] as [number, number]);
+        const weakX = interior.map((i) => [i, posAttr.getX(i)] as [number, number]);
+        const weakY = interior.map((i) => [i, posAttr.getY(i)] as [number, number]);
+        const weakZ = interior.map((i) => [i, posAttr.getZ(i)] as [number, number]);
+
+        const resX = smooth(local_lap, weakX, hardX, smoothFactor);
+        const resY = smooth(local_lap, weakY, hardY, smoothFactor);
+        const resZ = smooth(local_lap, weakZ, hardZ, smoothFactor);
+
+        for (const i of local_region) {
+            posAttr.setXYZ(i, resX.get(i)!, resY.get(i)!, resZ.get(i)!);
+        }
+        posAttr.needsUpdate = true;
+        mesh.geometry.computeVertexNormals();
     }
 }
