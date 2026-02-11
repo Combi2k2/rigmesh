@@ -14,15 +14,20 @@ import { MeshData } from '@/interface';
 import { skinnedMeshFromData } from '@/utils/threeMesh';
 import { skinnedMeshToData } from '@/utils/threeMesh';
 import { buildMesh } from '@/utils/threeMesh';
+import { extractMeshData } from '@/utils/threeMesh';
+import { extractSkelData } from '@/utils/threeMesh';
+import { setSkinWeights } from '@/utils/threeMesh';
 import * as THREE from 'three';
 import * as geo3d from '@/utils/geo3d';
+import * as geo2d from '@/utils/geo2d';
 import * as skin from '@/core/skin';
 import * as topo from '@/utils/topo';
 
 import { buildLaplacianTopology, smooth } from '@/utils/solver';
 import { buildLaplacianGeometry, diffuse } from '@/utils/solver';
 
-var graphlib = require("graphlib");
+var Graph = require("graphlib").Graph;
+var cdt2d = require('cdt2d');
 
 // --- Helper Functions (kept module-scope for simplicity) ---
 
@@ -45,88 +50,6 @@ function isPointInsideMesh(point: Vec3, mesh: MeshData): boolean {
     }
 
     return intersections % 2 === 1;
-}
-
-/**
- * Generate a triangulated slice connecting two boundary loops.
- */
-function generateSlice(loop1: Vec3[], loop2: Vec3[]): number[][] {
-    const n1 = loop1.length;
-    const n2 = loop2.length;
-
-    if (n1 === 0 || n2 === 0) return [];
-
-    let offset = 0;
-    const faces: number[][] = [];
-    let sameDir = true;
-
-    // Find the best alignment offset by finding closest vertex pair
-    if (n1 <= n2) {
-        for (let i = 0; i < n2; i++) {
-            const d0 = loop2[offset].minus(loop1[0]).norm();
-            const d1 = loop2[i].minus(loop1[0]).norm();
-            if (d0 > d1) offset = i;
-        }
-
-        // Check if loops are oriented the same direction
-        const dir1 = loop1[1 % n1].minus(loop1[0]);
-        const dir2 = loop2[(offset + 1) % n2].minus(loop2[offset]);
-        sameDir = dir1.dot(dir2) >= 0;
-
-        for (let i = 0; i < n2; i++) {
-            faces.push([
-                n1 + (offset + i) % n2,
-                n1 + (offset + i + 1) % n2,
-                Math.floor((i + 1) * n1 / n2) % n1
-            ]);
-            if (Math.floor(i * n1 / n2) !== Math.floor((i + 1) * n1 / n2) % n1) {
-                faces.push([
-                    n1 + (offset + i) % n2,
-                    Math.floor(i * n1 / n2),
-                    Math.floor((i + 1) * n1 / n2) % n1
-                ]);
-            }
-        }
-    } else {
-        for (let i = 0; i < n1; i++) {
-            const d0 = loop1[offset].minus(loop2[0]).norm();
-            const d1 = loop1[i].minus(loop2[0]).norm();
-            if (d0 > d1) offset = i;
-        }
-
-        const dir1 = loop2[1 % n2].minus(loop2[0]);
-        const dir2 = loop1[(offset + 1) % n1].minus(loop1[offset]);
-        sameDir = dir1.dot(dir2) > 0;
-
-        for (let i = 0; i < n1; i++) {
-            faces.push([
-                (offset + i) % n1,
-                (offset + i + 1) % n1,
-                n1 + Math.floor((i + 1) * n2 / n1) % n2
-            ]);
-            if (Math.floor(i * n2 / n1) !== Math.floor((i + 1) * n2 / n1) % n2) {
-                faces.push([
-                    (offset + i) % n1,
-                    n1 + Math.floor(i * n2 / n1) % n2,
-                    n1 + Math.floor((i + 1) * n2 / n1) % n2
-                ]);
-            }
-        }
-    }
-
-    // Flip faces if loops are oriented differently
-    if (!sameDir) {
-        for (let i = 0; i < faces.length; i++) {
-            const newFace: number[] = [];
-            for (const v of faces[i]) {
-                if (v < n1) newFace.push((n1 - v) % n1);
-                else newFace.push(v);
-            }
-            faces[i] = newFace;
-        }
-    }
-
-    return faces;
 }
 
 export type MergeType = 'snap' | 'split' | 'connect';
@@ -191,8 +114,8 @@ export class MeshMerge {
         this.data1.mesh[0].forEach((v, i) => { if (!toRemove1[i]) V.push(v), idxMap1.set(i, offset++); });
         this.data2.mesh[0].forEach((v, i) => { if (!toRemove2[i]) V.push(v), idxMap2.set(i, offset++); });
 
-        const g1 = new graphlib.Graph();
-        const g2 = new graphlib.Graph();
+        const g1 = new Graph();
+        const g2 = new Graph();
 
         this.data1.mesh[1].forEach(([i0, i1, i2], _) => {
             if (toRemove1[i0]) return;
@@ -308,19 +231,54 @@ export class MeshMerge {
         for (const [i, j] of pairs) {
             const loop1V = loops1[i].map(idx => posArray[idx]);
             const loop2V = loops2[j].map(idx => posArray[idx]);
-            const face_patch = generateSlice(loop1V, loop2V);
-            const face_final: number[][] = [];
-            face_patch.forEach(f => {
+            const n1 = loop1V.length;
+            const n2 = loop2V.length;
+
+            const centroid = new Vec3(0, 0, 0);
+            centroid.incrementBy(centroids1[i].times(n1));
+            centroid.incrementBy(centroids2[j].times(n2));
+            centroid.divideBy(n1 + n2);
+
+            const normal = geo3d.runNormalEstimation([...loop1V, ...loop2V]);
+            const bases = geo3d.computePlaneBasis(normal);
+            const frame = { origin: centroid, basisU: bases[0], basisV: bases[1] };
+            const plane = { normal, offset: centroid.dot(normal) };
+
+            const loop1V2D = loop1V.map(v => geo3d.projectTo2D(v, plane, frame));
+            const loop2V2D = loop2V.map(v => geo3d.projectTo2D(v, plane, frame));
+
+            const clockWise1 = geo2d.isClockwise(loop1V2D);
+            const clockWise2 = geo2d.isClockwise(loop2V2D);
+
+            console.log(...loop1V2D, ...loop2V2D);
+
+            if (clockWise1 === clockWise2) {
+                console.error("Loops are not supposed to be oriented the same direction");
+                return;
+            }
+            if (clockWise1) for (let i = 0; i < n2; i++)    loop2V2D[i].scaleBy(1.5);
+            else            for (let i = 0; i < n1; i++)    loop1V2D[i].scaleBy(1.5);
+
+            const points = [];
+            const edges = [];
+            loop1V2D.forEach(p => points.push([p.x, p.y]));
+            loop2V2D.forEach(p => points.push([p.x, p.y]));
+            loop1V2D.forEach((_, i) => edges.push([i, (i + 1) % n1]));
+            loop2V2D.forEach((_, i) => edges.push([i + n1, (i + 1) % n2 + n1]));
+
+            const faces_patch = cdt2d(points, edges, {exterior: false});
+            const faces_final = [];
+            faces_patch.forEach(f => {
                 const face: number[] = [];
                 for (const v of f) {
-                    if (v < loop1V.length)  face.push(loops1[i][v]);
-                    else                    face.push(loops2[j][v - loop1V.length]);
+                    if (v < n1) face.push(loops1[i][v]);
+                    else        face.push(loops2[j][v - n1]);
                 }
-                face_final.push(face);
+                faces_final.push(face);
             });
 
-            const patch = buildMesh([[...loop1V, ...loop2V], face_patch], false);
-            patch.userData.faces = face_final;
+            const patch = buildMesh([[...loop1V, ...loop2V], faces_patch], false);
+            patch.userData.faces = faces_final;
             patch.userData.isPatch = true;
             patch.material.color.set(0x008800);
             mesh.add(patch);
@@ -337,7 +295,10 @@ export class MeshMerge {
             const patches = mesh.children.filter(child => child.userData?.isPatch);
             const faces = [];
             const sourceSet = new Set<number>();
-            topoG = new graphlib.Graph();
+            topoG = new Graph();
+
+            for (let i = 0; i < posAttr.count; i++)
+                topoG.setNode(i, new Vec3(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)));
             
             for (let i = 0; i < idxAttr.count; i += 3) {
                 const i0 = idxAttr.getX(i);
@@ -388,12 +349,12 @@ export class MeshMerge {
         });
         const local_lap = buildLaplacianTopology([[], local_faces]);
 
-        const hardX = boundary.map((i) => [i, posAttr.getX(i)] as [number, number]);
-        const hardY = boundary.map((i) => [i, posAttr.getY(i)] as [number, number]);
-        const hardZ = boundary.map((i) => [i, posAttr.getZ(i)] as [number, number]);
-        const weakX = interior.map((i) => [i, posAttr.getX(i)] as [number, number]);
-        const weakY = interior.map((i) => [i, posAttr.getY(i)] as [number, number]);
-        const weakZ = interior.map((i) => [i, posAttr.getZ(i)] as [number, number]);
+        const hardX = boundary.map((i) => [i, topoG.node(i).x] as [number, number]);
+        const hardY = boundary.map((i) => [i, topoG.node(i).y] as [number, number]);
+        const hardZ = boundary.map((i) => [i, topoG.node(i).z] as [number, number]);
+        const weakX = interior.map((i) => [i, topoG.node(i).x] as [number, number]);
+        const weakY = interior.map((i) => [i, topoG.node(i).y] as [number, number]);
+        const weakZ = interior.map((i) => [i, topoG.node(i).z] as [number, number]);
 
         const resX = smooth(local_lap, weakX, hardX, smoothFactor);
         const resY = smooth(local_lap, weakY, hardY, smoothFactor);
@@ -404,5 +365,12 @@ export class MeshMerge {
         }
         posAttr.needsUpdate = true;
         mesh.geometry.computeVertexNormals();
+    }
+    public computeSkinWeights(mesh: THREE.SkinnedMesh) {
+        const skinWeights = skin.computeSkinWeightsGlobal(
+            extractMeshData(mesh),
+            extractSkelData(mesh)
+        );
+        setSkinWeights(mesh, skinWeights, null);
     }
 }
