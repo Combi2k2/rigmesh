@@ -129,11 +129,12 @@ export default function MeshMergeUI({
     }, [ready, flowApi.state.currentStep]);
 
     useControls('Step 1: Drag to desired position', {}, {collapsed: flowApi.state.currentStep !== 1});
-    // useControls('Step 2: Mesh Stitch', {}, {collapsed: flowApi.state.currentStep !== 2});
-    // useControls('Step 3: Mesh Smooth', {
-    //     smoothLayers: { value: flowApi.params.smoothLayers, min: 0, max: 10, step:    1, onChange: v => flowApi.onParamChange.setSmoothLayers(v) },
-    //     smoothFactor: { value: flowApi.params.smoothFactor, min: 0, max:  1, step: 0.05, onChange: v => flowApi.onParamChange.setSmoothFactor(v) },
-    // }, {collapsed: flowApi.state.currentStep !== 3});
+    useControls('Step 2: Mesh Cleanup', {}, {collapsed: flowApi.state.currentStep !== 2});
+    useControls('Step 3: Mesh Stitch', {}, {collapsed: flowApi.state.currentStep !== 3});
+    useControls('Step 4: Mesh Smooth', {
+        smoothLayers: { value: flowApi.params.smoothLayers, min: 0, max: 10, step:    1, onChange: v => flowApi.onParamChange.setSmoothLayers(v) },
+        smoothFactor: { value: flowApi.params.smoothFactor, min: 0, max: 10, step: 0.05, onChange: v => flowApi.onParamChange.setSmoothFactor(v) },
+    }, {collapsed: flowApi.state.currentStep !== 4});
     // useControls('Step 4: SkinWeight Computation', {}, {collapsed: flowApi.state.currentStep !== 4});
 
     useControls('Navigation', {
