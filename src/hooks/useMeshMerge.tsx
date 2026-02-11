@@ -41,6 +41,18 @@ export function useMeshMerge(onMergeComplete?: (mesh: THREE.SkinnedMesh) => void
         resultRef.current = result;
     }, [mesh1, mesh2, param, swap]);
 
+    const processStep3 = useCallback(() => {
+        if (!mergerRef.current) return;
+        if (!resultRef.current) return;
+        mergerRef.current.runMeshStitch(resultRef.current);
+    }, []);
+
+    const processStep4 = useCallback(() => {
+        if (!mergerRef.current) return;
+        if (!resultRef.current) return;
+        mergerRef.current.runMeshSmooth(resultRef.current, smoothLayers, smoothFactor);
+    }, [smoothLayers, smoothFactor]);
+
     const onNext = useCallback(() => {
         setCurrentStep(prev => prev + 1);
     }, []);
@@ -59,9 +71,13 @@ export function useMeshMerge(onMergeComplete?: (mesh: THREE.SkinnedMesh) => void
 
     useEffect(() => {
         if (currentStep === 2)  processStep2();
+        if (currentStep === 3)  processStep3();
+        if (currentStep === 4)  processStep4();
     }, [
         currentStep,
         processStep2, mesh1, mesh2, param, swap,
+        processStep3,
+        processStep4, smoothLayers, smoothFactor,
     ]);
 
     useEffect(() => {
