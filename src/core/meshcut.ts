@@ -449,7 +449,6 @@ export class MeshCut {
                 skinIndices[i].push(j);
             }
         }
-        console.log(skinWeights, skinIndices);
         setSkinWeights(mesh, skinWeights, skinIndices);
     }
 }
