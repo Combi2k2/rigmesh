@@ -92,6 +92,7 @@ export function useScene(containerRef: RefObject<HTMLDivElement>): SceneHooks {
                 console.warn('[useScene] Helper not found for skinned mesh');
             }
         }
+        sceneRef.current.detach();
         sceneRef.current.remove(obj);
     }, []);
 
