@@ -1,7 +1,70 @@
 import * as LinearAlgebra from '@/lib/linalg/linear-algebra.js';
 import Queue from './misc';
 import { buildLaplacianTopology, smooth } from './solver';
+import { Vec2, Vec3 } from '@/interface';
 let Vector = LinearAlgebra.Vector;
+
+/**
+ * Project a 3D vertex onto a plane and get its 2D coordinates in the frame.
+ * @param {Vec3} point - The 3D point to project
+ * @param {{ normal: Vec3, offset: number }} plane - The plane (normal and offset) used for projection
+ * @param {{ origin: Vec3, basisU: Vec3, basisV: Vec3 }} frame - The frame for 2D coordinates
+ * @returns {Vec2} Coordinates in the frame's local system
+ */
+export function projectTo2D(point, plane, frame) {
+    const { normal, offset } = plane;
+    const signedDist = normal.dot(point) + offset;
+    const projected = point.minus(normal.times(signedDist));
+    const fromOrigin = projected.minus(frame.origin);
+    return new Vec2(fromOrigin.dot(frame.basisU), fromOrigin.dot(frame.basisV));
+}
+
+/**
+ * Convert 2D coordinates back to 3D point in the frame.
+ * @param {Vec2} point - Vec2 in the frame's local system
+ * @param {{ origin: Vec3, basisU: Vec3, basisV: Vec3 }} frame - The frame
+ * @returns {Vec3} The 3D point on the plane
+ */
+export function projectTo3D(point, frame) {
+    return frame.origin
+        .plus(frame.basisU.times(point.x))
+        .plus(frame.basisV.times(point.y));
+}
+
+/**
+ * Compute orthogonal basis vectors for a plane.
+ * @param {Vec3} normal - The plane normal (unit vector)
+ * @returns {[Vec3, Vec3]} [basisU, basisV] two orthogonal unit vectors on the plane
+ */
+export function computePlaneBasis(normal) {
+    const absX = Math.abs(normal.x);
+    const absY = Math.abs(normal.y);
+    const absZ = Math.abs(normal.z);
+
+    let tempVec;
+    if (absX <= absY && absX <= absZ) {
+        tempVec = new Vec3(1, 0, 0);
+    } else if (absY <= absZ) {
+        tempVec = new Vec3(0, 1, 0);
+    } else {
+        tempVec = new Vec3(0, 0, 1);
+    }
+
+    const basisU = tempVec.minus(normal.times(tempVec.dot(normal))).unit();
+    const basisV = normal.cross(basisU);
+    return [basisU, basisV];
+}
+
+/**
+ * Build a Frame from a Plane (origin on plane, basisU/basisV from plane normal).
+ * @param {{ normal: Vec3, offset: number }} plane - The plane
+ * @returns {{ origin: Vec3, basisU: Vec3, basisV: Vec3 }} The frame
+ */
+export function planeToFrame(plane) {
+    const [basisU, basisV] = computePlaneBasis(plane.normal);
+    const origin = plane.normal.times(-plane.offset);
+    return { origin, basisU, basisV };
+}
 
 var Graph = require("graphlib").Graph;
 
@@ -36,6 +99,38 @@ export function rayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2) {
     if (t <= EPS)
         return null;
     return { t, u, v };
+}
+export function runNormalEstimation(points, iterations = 20) {
+    const n = points.length;
+    const C = points.reduce((acc, p) => acc.plus(p), new Vec3(0, 0, 0)).over(n);
+    let xx = 0, xy = 0, xz = 0;
+    let yy = 0, yz = 0, zz = 0;
+
+    for (const p of points) {
+        const r = p.minus(C);
+        xx += r.x * r.x;
+        xy += r.x * r.y;
+        xz += r.x * r.z;
+        yy += r.y * r.y;
+        yz += r.y * r.z;
+        zz += r.z * r.z;
+    }
+    let normal = new Vec3(1, 0, 0);
+
+    for (let iter = 0; iter < iterations; iter++) {
+        const x = xx*normal.x + xy*normal.y + xz*normal.z;
+        const y = xy*normal.x + yy*normal.y + yz*normal.z;
+        const z = xz*normal.x + yz*normal.y + zz*normal.z;
+        const next = new Vec3(x, y, z).unit();
+        next.decrementBy(normal);
+        next.normalize();
+
+        if (next.norm2() < 1e-12)
+            break;
+
+        normal = next;
+    }
+    return normal;
 }
 
 export function runLaplacianSmooth(quantity, fixedIndices, connectivity, alpha) {

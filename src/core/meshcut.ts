@@ -15,70 +15,11 @@ import { buildLaplacianTopology, smooth } from '@/utils/solver';
 import { buildLaplacianGeometry, diffuse } from '@/utils/solver';
 import Queue from '@/utils/misc';
 import * as geo2d from '@/utils/geo2d';
+import * as geo3d from '@/utils/geo3d';
 import * as THREE from 'three';
 
 var graphlib = require("graphlib");
 var cdt2d = require('cdt2d');
-
-/**
- * Project a 3D vertex onto a plane and get its 2D coordinates in the frame.
- * @param point The 3D point to project
- * @param plane The plane (normal and offset) used for projection
- * @param frame The frame (origin, basisU, basisV) for 2D coordinates
- * @returns Vec2 coordinates in the frame's local system
- */
-export function projectTo2D(point: Vec3, plane: Plane, frame: Frame): Vec2 {
-    const { normal, offset } = plane;
-    const signedDist = normal.dot(point) + offset;
-    const projected = point.minus(normal.times(signedDist));
-    const fromOrigin = projected.minus(frame.origin);
-    return new Vec2(fromOrigin.dot(frame.basisU), fromOrigin.dot(frame.basisV));
-}
-
-/**
- * Convert 2D coordinates back to 3D point in the frame.
- * @param point Vec2 in the frame's local system
- * @param frame The frame (origin, basisU, basisV)
- * @returns The 3D point on the plane
- */
-export function projectTo3D(point: Vec2, frame: Frame): Vec3 {
-    return frame.origin
-        .plus(frame.basisU.times(point.x))
-        .plus(frame.basisV.times(point.y));
-}
-
-/**
- * Compute orthogonal basis vectors for a plane.
- * @param normal The plane normal (unit vector)
- * @returns [basisU, basisV] two orthogonal unit vectors on the plane
- */
-export function computePlaneBasis(normal: Vec3): [Vec3, Vec3] {
-    const absX = Math.abs(normal.x);
-    const absY = Math.abs(normal.y);
-    const absZ = Math.abs(normal.z);
-
-    let tempVec: Vec3;
-    if (absX <= absY && absX <= absZ) {
-        tempVec = new Vec3(1, 0, 0);
-    } else if (absY <= absZ) {
-        tempVec = new Vec3(0, 1, 0);
-    } else {
-        tempVec = new Vec3(0, 0, 1);
-    }
-
-    const basisU = tempVec.minus(normal.times(tempVec.dot(normal))).unit();
-    const basisV = normal.cross(basisU);
-    return [basisU, basisV];
-}
-
-/**
- * Build a Frame from a Plane (origin on plane, basisU/basisV from plane normal).
- */
-export function planeToFrame(plane: Plane): Frame {
-    const [basisU, basisV] = computePlaneBasis(plane.normal);
-    const origin = plane.normal.times(-plane.offset);
-    return { origin, basisU, basisV };
-}
 
 /** Screen-space line: two NDC points (Vec2 or [x,y] tuple) */
 export type ScreenLine = [[number, number], [number, number]];
@@ -135,7 +76,7 @@ export class MeshCut {
         this.inputMesh = mesh;
     }
     public runMeshSplit(plane: Plane): THREE.SkinnedMesh[] {
-        const [basisU, basisV] = computePlaneBasis(plane.normal);
+        const [basisU, basisV] = geo3d.computePlaneBasis(plane.normal);
         this.normal = plane.normal;
         this.basisU = basisU;
         this.basisV = basisV;
@@ -336,7 +277,7 @@ export class MeshCut {
             const plane = { normal: this.normal, offset };
             const frame = { origin: this.normal.times(-offset), basisU: this.basisU, basisV: this.basisV };
 
-            let polygon = loop.map(i => projectTo2D(V[i], plane, frame));
+            let polygon = loop.map(i => geo3d.projectTo2D(V[i], plane, frame));
             let inverse = false;
 
             if (geo2d.isClockwise(polygon)) {
@@ -356,7 +297,7 @@ export class MeshCut {
             const positions = new Float32Array(points.length * 3);
 
             points.forEach((p, i) => {
-                const v = i < loop.length ? V[loop[i]] : projectTo3D(new Vec2(...p), frame);
+                const v = i < loop.length ? V[loop[i]] : geo3d.projectTo3D(new Vec2(...p), frame);
                 positions[i*3+0] = v.x;
                 positions[i*3+1] = v.y;
                 positions[i*3+2] = v.z;
