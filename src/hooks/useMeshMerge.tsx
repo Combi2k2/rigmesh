@@ -1,220 +1,99 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect, RefObject } from 'react';
 import * as THREE from 'three';
-import { runMeshMerge, runMeshMergePreserveSkin } from '@/core/meshmerge';
+import { MeshMerge } from '@/core/meshmerge';
+import { MergeParams } from '@/core/meshmerge';
 
 export interface MeshMergeState {
     currentStep: number;
-    inputMesh1: THREE.SkinnedMesh | null;
-    inputMesh2: THREE.SkinnedMesh | null;
-    resultMesh: THREE.SkinnedMesh | null;
-    error: string | null;
+    resultRef: RefObject<THREE.SkinnedMesh | null>;
 }
-
 export interface MeshMergeParams {
-    smoothingFactor: number;
-    preserveSkinWeights: boolean;
+    smoothLayers: number;
+    smoothFactor: number;
 }
 
-export function useMeshMerge(
-    onMergeComplete?: (mesh: THREE.SkinnedMesh) => void
-) {
-    // State
+export function useMeshMerge(onMergeComplete?: (mesh: THREE.SkinnedMesh) => void) {
     const [currentStep, setCurrentStep] = useState<number>(0);
-    const [inputMesh1, setInputMesh1] = useState<THREE.SkinnedMesh | null>(null);
-    const [inputMesh2, setInputMesh2] = useState<THREE.SkinnedMesh | null>(null);
-    const [resultMesh, setResultMesh] = useState<THREE.SkinnedMesh | null>(null);
-    const [error, setError] = useState<string | null>(null);
+    const [mesh1, setMesh1] = useState<THREE.SkinnedMesh | null>(null);
+    const [mesh2, setMesh2] = useState<THREE.SkinnedMesh | null>(null);
+    const [smoothLayers, setSmoothLayers] = useState<number>(0);
+    const [smoothFactor, setSmoothFactor] = useState<number>(0.1);
+    const [swap, setSwap] = useState<boolean>(false);
+    const [param, setParam] = useState<MergeParams | null>(null);
 
-    // Params
-    const [smoothingFactor, setSmoothingFactor] = useState<number>(0.1);
-    const [preserveSkinWeights, setPreserveSkinWeights] = useState<boolean>(false);
+    const mergerRef = useRef<MeshMerge | null>(null);
+    const resultRef = useRef<THREE.SkinnedMesh | null>(null);
 
-    /**
-     * Step 0: Initialize with the first input skinned mesh.
-     * Moves to step 1 (ready for second mesh input).
-     */
-    const processStep0 = useCallback((mesh: THREE.SkinnedMesh) => {
-        setInputMesh1(mesh);
-        setInputMesh2(null);
-        setResultMesh(null);
-        setError(null);
+    const onReady = useCallback((mesh1: THREE.SkinnedMesh, mesh2: THREE.SkinnedMesh) => {
         setCurrentStep(1);
+        setMesh1(mesh1);
+        setMesh2(mesh2);
+        setSwap(false);
     }, []);
 
-    /**
-     * Step 1: Accept the second mesh and perform the merge.
-     * Moves to step 2 (preview/adjust result).
-     */
-    const processStep1 = useCallback((mesh: THREE.SkinnedMesh) => {
-        if (!inputMesh1) return;
+    const processStep2 = useCallback(() => {
+        if (!mesh1 || !mesh2 || !param) return;
+        const merger = swap ? new MeshMerge(mesh2, mesh1, param) : new MeshMerge(mesh1, mesh2, param);
+        const result = merger.runTriangleRemoval();
+        mergerRef.current = merger;
+        resultRef.current = result;
+    }, [mesh1, mesh2, param, swap]);
 
-        setInputMesh2(mesh);
-        setError(null);
-
-        try {
-            const mergeFn = preserveSkinWeights ? runMeshMergePreserveSkin : runMeshMerge;
-            const result = mergeFn(inputMesh1, mesh, smoothingFactor);
-
-            if (result) {
-                setResultMesh(result);
-                setCurrentStep(2);
-            } else {
-                setError('Meshes do not appear to intersect. Please ensure the meshes overlap before merging.');
-            }
-        } catch (e) {
-            const errorMsg = e instanceof Error ? e.message : 'Unknown error during merge';
-            setError(`Merge failed: ${errorMsg}`);
-        }
-    }, [inputMesh1, smoothingFactor, preserveSkinWeights]);
-
-    /**
-     * Step 2: Adjust smoothing factor and re-run merge.
-     * Can be called multiple times to preview different settings.
-     */
-    const processStep2 = useCallback((factor: number) => {
-        if (!inputMesh1 || !inputMesh2) return;
-
-        // Dispose old result mesh before re-merging
-        if (resultMesh) {
-            resultMesh.geometry.dispose();
-            if (resultMesh.material instanceof THREE.Material) {
-                resultMesh.material.dispose();
-            }
-        }
-
-        setSmoothingFactor(factor);
-        setError(null);
-
-        try {
-            const mergeFn = preserveSkinWeights ? runMeshMergePreserveSkin : runMeshMerge;
-            const result = mergeFn(inputMesh1, inputMesh2, factor);
-
-            if (result) {
-                setResultMesh(result);
-            } else {
-                setError('Merge failed with new parameters.');
-            }
-        } catch (e) {
-            const errorMsg = e instanceof Error ? e.message : 'Unknown error during merge';
-            setError(`Merge failed: ${errorMsg}`);
-        }
-    }, [inputMesh1, inputMesh2, resultMesh, preserveSkinWeights]);
-
-    /**
-     * Toggle preserve skin weights and re-run merge if in step 2.
-     */
-    const togglePreserveSkinWeights = useCallback((preserve: boolean) => {
-        setPreserveSkinWeights(preserve);
-
-        // If we're in step 2, re-run the merge with new setting
-        if (currentStep === 2 && inputMesh1 && inputMesh2) {
-            if (resultMesh) {
-                resultMesh.geometry.dispose();
-                if (resultMesh.material instanceof THREE.Material) {
-                    resultMesh.material.dispose();
-                }
-            }
-
-            try {
-                const mergeFn = preserve ? runMeshMergePreserveSkin : runMeshMerge;
-                const result = mergeFn(inputMesh1, inputMesh2, smoothingFactor);
-
-                if (result) {
-                    setResultMesh(result);
-                    setError(null);
-                } else {
-                    setError('Merge failed with new parameters.');
-                }
-            } catch (e) {
-                const errorMsg = e instanceof Error ? e.message : 'Unknown error during merge';
-                setError(`Merge failed: ${errorMsg}`);
-            }
-        }
-    }, [currentStep, inputMesh1, inputMesh2, resultMesh, smoothingFactor]);
-
-    /**
-     * Move to previous step.
-     */
-    const handleBack = useCallback(() => {
-        if (currentStep === 2) {
-            // Clean up result mesh
-            if (resultMesh) {
-                resultMesh.geometry.dispose();
-                if (resultMesh.material instanceof THREE.Material) {
-                    resultMesh.material.dispose();
-                }
-            }
-            setInputMesh2(null);
-            setResultMesh(null);
-            setError(null);
-            setCurrentStep(1);
-        } else if (currentStep === 1) {
-            setInputMesh1(null);
-            setError(null);
-            setCurrentStep(0);
-        }
-    }, [currentStep, resultMesh]);
-
-    /**
-     * Reset all state to initial.
-     */
-    const handleReset = useCallback(() => {
-        // Clean up result mesh
-        if (resultMesh) {
-            resultMesh.geometry.dispose();
-            if (resultMesh.material instanceof THREE.Material) {
-                resultMesh.material.dispose();
-            }
-        }
+    const onNext = useCallback(() => {
+        setCurrentStep(prev => prev + 1);
+    }, []);
+    const onBack = useCallback(() => {
+        setCurrentStep(prev => Math.max(1, prev - 1));
+    }, []);
+    const onReset = useCallback(() => {
         setCurrentStep(0);
-        setInputMesh1(null);
-        setInputMesh2(null);
-        setResultMesh(null);
-        setError(null);
-    }, [resultMesh]);
+        setMesh1(null);
+        setMesh2(null);
+        setParam(null);
+        setSwap(false);
+        mergerRef.current = null;
+        resultRef.current = null;
+    }, []);
 
-    /**
-     * Apply the merge and return result via callback.
-     */
-    const handleApply = useCallback(() => {
-        if (resultMesh && onMergeComplete) {
-            onMergeComplete(resultMesh);
-            // Don't dispose mesh since it's being passed to the callback
-            setCurrentStep(0);
-            setInputMesh1(null);
-            setInputMesh2(null);
-            setResultMesh(null);
-            setError(null);
+    useEffect(() => {
+        if (currentStep === 2)  processStep2();
+    }, [
+        currentStep,
+        processStep2, mesh1, mesh2, param, swap,
+    ]);
+
+    useEffect(() => {
+        if (currentStep > 4) {
+            if (onMergeComplete && resultRef.current)
+                onMergeComplete(resultRef.current);
+
+            onReset();
         }
-    }, [resultMesh, onMergeComplete]);
+    }, [currentStep, onMergeComplete, onReset]);
 
     const state: MeshMergeState = {
         currentStep,
-        inputMesh1,
-        inputMesh2,
-        resultMesh,
-        error,
+        resultRef
     };
-
     const params: MeshMergeParams = {
-        smoothingFactor,
-        preserveSkinWeights,
+        smoothLayers,
+        smoothFactor,
     };
 
     return {
         state,
         params,
-        processStep0,
-        processStep1,
-        processStep2,
-        onBack: handleBack,
-        onReset: handleReset,
-        onApply: handleApply,
+        onReady,
+        onNext,
+        onBack,
+        onReset,
+        setParam,
+        setSwap,
         onParamChange: {
-            setSmoothingFactor,
-            setPreserveSkinWeights: togglePreserveSkinWeights,
+            setSmoothLayers,
+            setSmoothFactor,
         },
     };
 }
