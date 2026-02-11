@@ -7,7 +7,7 @@ import MeshGenUI from '@/components/meshgenUI/MeshGenUI';
 import Scene from '@/components/main/Scene';
 import Canvas from '@/components/canvas';
 import MeshCutUI from '@/components/MeshCutUI';
-import { MeshMergeUI } from '@/components/meshmergeUI';
+import MeshMergeUI from '@/components/MeshMergeUI';
 import { computeSkinWeightsGlobal } from '@/core/skin';
 import { skinnedMeshFromData } from '@/utils/threeMesh';
 import { Point, Vec2, Vec3, MeshData, SkelData, MenuAction } from '@/interface';
@@ -171,12 +171,12 @@ export default function Page() {
             reader.onload = (e) => {
                 try {
                     const data = JSON.parse(e.target?.result as string) as SkinnedMeshData;
-                    
+
                     // Validate data structure
                     if (!data.mesh3D || !data.skeleton || !data.skinWeights || !data.skinIndices) {
                         throw new Error('Invalid file format: missing required fields');
                     }
-                    
+
                     // Convert back to Vec3 format
                     const mesh3D: MeshData = [
                         data.mesh3D.vertices.map((v) => new Vec3(v.x, v.y, v.z)),
@@ -218,7 +218,7 @@ export default function Page() {
     return (
         <div className="relative h-screen w-full overflow-hidden">
             {/* Always keep Scene mounted to preserve meshes, just hide it during meshgen */}
-            <div 
+            <div
                 ref={sceneContainerRef}
                 className="h-full w-full"
                 style={{ display: isMeshGenMode ? 'none' : 'block' }}
