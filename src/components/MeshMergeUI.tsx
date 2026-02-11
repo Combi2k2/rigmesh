@@ -135,7 +135,7 @@ export default function MeshMergeUI({
         smoothLayers: { value: flowApi.params.smoothLayers, min: 0, max: 10, step:    1, onChange: v => flowApi.onParamChange.setSmoothLayers(v) },
         smoothFactor: { value: flowApi.params.smoothFactor, min: 0, max: 10, step: 0.05, onChange: v => flowApi.onParamChange.setSmoothFactor(v) },
     }, {collapsed: flowApi.state.currentStep !== 4});
-    // useControls('Step 4: SkinWeight Computation', {}, {collapsed: flowApi.state.currentStep !== 4});
+    useControls('Step 5: SkinWeight Computation', {}, {collapsed: flowApi.state.currentStep !== 5});
 
     useControls('Navigation', {
         Back: button(() => flowApi.onBack(), { disabled: flowApi.state.currentStep <= 1 }),
