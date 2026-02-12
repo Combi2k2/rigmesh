@@ -1,6 +1,6 @@
 var cdt2d = require('cdt2d');
 import { findMats, CpNodeFs } from 'flo-mat';
-import Queue from './queue';
+import Queue from './misc';
 
 const { traverseEdges, isTerminating, getMatCurveToNext } = CpNodeFs;
 
@@ -125,4 +125,18 @@ export function generateTriangleGrid(polygon, spacing) {
  */
 export function ccw(a, b, c) {
     return (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
+}
+
+/**
+ * Check if polygon vertices are in clockwise order using shoelace formula
+ * @param {Array<{x: number, y: number}>} points - Polygon vertices
+ * @returns {boolean} True if points are in clockwise order
+ */
+export function isClockwise(points) {
+    let sum = 0;
+    for (let i = 0; i < points.length; i++) {
+        const j = (i + 1) % points.length;
+        sum += (points[j].x - points[i].x) * (points[j].y + points[i].y);
+    }
+    return sum > 0;
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { MeshGenParams } from '@/hooks/meshgen';
+import { MeshGenParams } from '@/hooks/useMeshGen';
 import { Leva, useControls, button } from 'leva';
 
 interface MeshGenControllerProps {

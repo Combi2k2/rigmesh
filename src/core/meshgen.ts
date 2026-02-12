@@ -1,6 +1,6 @@
 import * as geo2d from '../utils/geo2d';
 import * as geo3d from '../utils/geo3d';
-import Queue from '../utils/queue';
+import Queue from '../utils/misc';
 import Vector from '@/lib/linalg/vector';
 import { Point, Vec2 } from '../interface/point';
 
@@ -9,15 +9,6 @@ const { Mesh } = require('@/lib/geometry/mesh');
 // @ts-ignore - CommonJS module
 var Graph = require("graphlib").Graph;
 var cdt2d = require('cdt2d');
-
-function isClockwise(points: Point[]) {
-    let sum = 0;
-    for (let i = 0; i < points.length; i++) {
-        const j = (i + 1) % points.length;
-        sum += (points[j].x - points[i].x) * (points[j].y + points[i].y);
-    }
-    return sum > 0;
-}
 
 function reparameterize(points: Point[], isodistance: number) {
     let length = 0;
@@ -353,9 +344,9 @@ class MeshGen {
                 let p2 = g.node(c2);
                 let barycenter = p0.plus(p1).plus(p2).times(1/3);
                 g.setNode(vertIdx, barycenter);
-                g.setEdge(c0, vertIdx); g.setEdge(vertIdx, c0);
-                g.setEdge(c1, vertIdx); g.setEdge(vertIdx, c1);
-                g.setEdge(c2, vertIdx); g.setEdge(vertIdx, c2);
+                g.setEdge(c0, vertIdx, true);   g.setEdge(vertIdx, c0, true);
+                g.setEdge(c1, vertIdx, true);   g.setEdge(vertIdx, c1, true);
+                g.setEdge(c2, vertIdx, true);   g.setEdge(vertIdx, c2, true);
 
                 vertIdx++;
             }
@@ -724,7 +715,7 @@ class MeshGen {
             // Check first edge orientation
             if (edges.length > 0) {
                 let [i0, i1] = edges[0];
-                if (isClockwise([
+                if (geo2d.isClockwise([
                     {x: points[i0][0], y: points[i0][1]},
                     {x: points[i1][0], y: points[i1][1]},
                     centroid

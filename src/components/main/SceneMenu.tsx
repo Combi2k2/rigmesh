@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
-import { MenuAction } from '@/hooks/useScene';
+import { MenuAction } from '@/interface';
 import * as THREE from 'three';
 
 export interface MenuPosition {
@@ -124,7 +124,6 @@ export default function SceneMenu({
         { label: 'Copy', action: 'copy', disabled: false },
         { label: 'Cut', action: 'cut', disabled: false },
         { label: 'Delete', action: 'delete', disabled: false },
-        { label: 'Rig', action: 'rig', disabled: false, divider: true },
     ];
 
     if (!isOpen || !position) {

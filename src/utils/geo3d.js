@@ -1,11 +1,137 @@
 import * as LinearAlgebra from '@/lib/linalg/linear-algebra.js';
-import Queue from './queue';
+import Queue from './misc';
+import { buildLaplacianTopology, smooth } from './solver';
+import { Vec2, Vec3 } from '@/interface';
 let Vector = LinearAlgebra.Vector;
-let DenseMatrix = LinearAlgebra.DenseMatrix;
-let SparseMatrix = LinearAlgebra.SparseMatrix;
-let Triplet = LinearAlgebra.Triplet;
+
+/**
+ * Project a 3D vertex onto a plane and get its 2D coordinates in the frame.
+ * @param {Vec3} point - The 3D point to project
+ * @param {{ normal: Vec3, offset: number }} plane - The plane (normal and offset) used for projection
+ * @param {{ origin: Vec3, basisU: Vec3, basisV: Vec3 }} frame - The frame for 2D coordinates
+ * @returns {Vec2} Coordinates in the frame's local system
+ */
+export function projectTo2D(point, plane, frame) {
+    const { normal, offset } = plane;
+    const signedDist = normal.dot(point) + offset;
+    const projected = point.minus(normal.times(signedDist));
+    const fromOrigin = projected.minus(frame.origin);
+    return new Vec2(fromOrigin.dot(frame.basisU), fromOrigin.dot(frame.basisV));
+}
+
+/**
+ * Convert 2D coordinates back to 3D point in the frame.
+ * @param {Vec2} point - Vec2 in the frame's local system
+ * @param {{ origin: Vec3, basisU: Vec3, basisV: Vec3 }} frame - The frame
+ * @returns {Vec3} The 3D point on the plane
+ */
+export function projectTo3D(point, frame) {
+    return frame.origin
+        .plus(frame.basisU.times(point.x))
+        .plus(frame.basisV.times(point.y));
+}
+
+/**
+ * Compute orthogonal basis vectors for a plane.
+ * @param {Vec3} normal - The plane normal (unit vector)
+ * @returns {[Vec3, Vec3]} [basisU, basisV] two orthogonal unit vectors on the plane
+ */
+export function computePlaneBasis(normal) {
+    const absX = Math.abs(normal.x);
+    const absY = Math.abs(normal.y);
+    const absZ = Math.abs(normal.z);
+
+    let tempVec;
+    if (absX <= absY && absX <= absZ) {
+        tempVec = new Vec3(1, 0, 0);
+    } else if (absY <= absZ) {
+        tempVec = new Vec3(0, 1, 0);
+    } else {
+        tempVec = new Vec3(0, 0, 1);
+    }
+
+    const basisU = tempVec.minus(normal.times(tempVec.dot(normal))).unit();
+    const basisV = normal.cross(basisU);
+    return [basisU, basisV];
+}
+
+/**
+ * Build a Frame from a Plane (origin on plane, basisU/basisV from plane normal).
+ * @param {{ normal: Vec3, offset: number }} plane - The plane
+ * @returns {{ origin: Vec3, basisU: Vec3, basisV: Vec3 }} The frame
+ */
+export function planeToFrame(plane) {
+    const [basisU, basisV] = computePlaneBasis(plane.normal);
+    const origin = plane.normal.times(-plane.offset);
+    return { origin, basisU, basisV };
+}
 
 var Graph = require("graphlib").Graph;
+
+const EPS = 1e-8;
+
+/**
+ * Möller–Trumbore ray-triangle intersection.
+ * @param {Vector} rayOrigin - Ray origin point
+ * @param {Vector} rayDir - Ray direction (need not be unit)
+ * @param {Vector} v0 - Triangle vertex 0
+ * @param {Vector} v1 - Triangle vertex 1
+ * @param {Vector} v2 - Triangle vertex 2
+ * @returns {{ t: number, u: number, v: number } | null} Hit with barycentric u,v and distance t, or null if no hit
+ */
+export function rayTriangleIntersect(rayOrigin, rayDir, v0, v1, v2) {
+    let edge1 = v1.minus(v0);
+    let edge2 = v2.minus(v0);
+    let h = rayDir.cross(edge2);
+    let a = edge1.dot(h);
+    if (Math.abs(a) < EPS)
+        return null;
+    let f = 1 / a;
+    let s = rayOrigin.minus(v0);
+    let u = f * s.dot(h);
+    if (u < -EPS || u > 1 + EPS)
+        return null;
+    let q = s.cross(edge1);
+    let v = f * rayDir.dot(q);
+    if (v < -EPS || u + v > 1 + EPS)
+        return null;
+    let t = f * edge2.dot(q);
+    if (t <= EPS)
+        return null;
+    return { t, u, v };
+}
+export function runNormalEstimation(points, iterations = 20) {
+    const n = points.length;
+    const C = points.reduce((acc, p) => acc.plus(p), new Vec3(0, 0, 0)).over(n);
+    let xx = 0, xy = 0, xz = 0;
+    let yy = 0, yz = 0, zz = 0;
+
+    for (const p of points) {
+        const r = p.minus(C);
+        xx += r.x * r.x;
+        xy += r.x * r.y;
+        xz += r.x * r.z;
+        yy += r.y * r.y;
+        yz += r.y * r.z;
+        zz += r.z * r.z;
+    }
+    let normal = new Vec3(1, 0, 0);
+
+    for (let iter = 0; iter < iterations; iter++) {
+        const x = xx*normal.x + xy*normal.y + xz*normal.z;
+        const y = xy*normal.x + yy*normal.y + yz*normal.z;
+        const z = xz*normal.x + yz*normal.y + zz*normal.z;
+        const next = new Vec3(x, y, z).unit();
+        next.decrementBy(normal);
+        next.normalize();
+
+        if (next.norm2() < 1e-12)
+            break;
+
+        normal = next;
+    }
+    return normal;
+}
 
 export function runLaplacianSmooth(quantity, fixedIndices, connectivity, alpha) {
     let n = quantity.length;
@@ -40,30 +166,9 @@ export function runFaceOrientation(vertices, faces) {
         let v0 = vertices[faces[i][0]];
         let v1 = vertices[faces[i][1]];
         let v2 = vertices[faces[i][2]];
-        
-        // Moller-Trumbore ray-triangle intersection
-        let edge1 = v1.minus(v0);
-        let edge2 = v2.minus(v0);
-        let s = origin.minus(v0);
-        let r_cross_e2 = raydir.cross(edge2);
-        let s_cross_e1 = s.cross(edge1);
-
-        let det = edge1.dot(r_cross_e2);
-        if (Math.abs(det) < 1e-6)
-            continue;
-
-        let u = r_cross_e2.dot(s) / det;
-        let v = s_cross_e1.dot(raydir) / det;
-        let t = edge2.dot(s_cross_e1) / det;
-
-        if (u < -1e-6)  continue;
-        if (v < -1e-6)  continue;
-        if (u + v > 1 + 1e-6)
-            continue;
-
-        if (t > 1e-6) {
+        let hit = rayTriangleIntersect(origin, raydir, v0, v1, v2);
+        if (hit && hit.t > 1e-6)
             inward = !inward;
-        }
     }
     if (inward) {
         faces[0] = faces[0].reverse();
@@ -121,48 +226,18 @@ export function runFaceOrientation(vertices, faces) {
     }
 }
 export function runLeastSquaresMesh(vertices, faces, constraints, factor = 1) {
-    let n = vertices.length;
-    let m = constraints.length;
-    let T = new Triplet(n+m, n);
+    let lap = buildLaplacianTopology([vertices, faces]);
+    let smoothness = Math.log(factor);
 
-    let deg = new Array(n).fill(0);
+    let results = ['x', 'y', 'z'].map(axis => {
+        let weak = constraints.map(j => [j, vertices[j][axis]]);
+        return smooth(lap, weak, [], smoothness);
+    });
 
-    for (let f of faces)
-    for (let v of f)
-        deg[v] += 2;
-
-    for (let i = 0; i < n; i++)
-        T.addEntry(factor, i, i);
-
-    for (let f of faces)
-    for (let i = 0; i < f.length; i++) {
-        let u = f[i];
-        let v = f[(i+1)%f.length];
-
-        T.addEntry(-factor/deg[u], u, v);
-        T.addEntry(-factor/deg[v], v, u);
-    }
-    for (let i = 0; i < m; i++)
-        T.addEntry(1, n+i, constraints[i]);
-
-    let A = SparseMatrix.fromTriplet(T);
-    let b = DenseMatrix.zeros(n+m, 3);
-    
-    for (let i = 0; i < m; i++) {
-        let j = constraints[i];
-        b.set(vertices[j].x, n+i, 0);
-        b.set(vertices[j].y, n+i, 1);
-        b.set(vertices[j].z, n+i, 2);
-    }
-    b = A.transpose().timesDense(b);
-    A = A.transpose().timesSparse(A);
-
-    let llt = A.chol();
-    let u = llt.solvePositiveDefinite(b);
-    for (let i = 0; i < n; i++) {
-        vertices[i].x = u.get(i, 0);
-        vertices[i].y = u.get(i, 1);
-        vertices[i].z = u.get(i, 2);
+    for (let i = 0; i < vertices.length; i++) {
+        vertices[i].x = results[0].get(i);
+        vertices[i].y = results[1].get(i);
+        vertices[i].z = results[2].get(i);
     }
 }
 export function runIsometricRemesh(vertices, faces, iterations = 6, length = -1) {

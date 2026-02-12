@@ -10,7 +10,7 @@ export interface ViewSpaceReturn {
     cameraRef: RefObject<THREE.PerspectiveCamera>;
     rendererRef: RefObject<THREE.WebGLRenderer>;
     controlsRef: RefObject<OrbitControls>;
-}
+}   
 
 // Default configuration constants
 const DEFAULT_FOV = 75;
@@ -174,17 +174,44 @@ export function useViewSpace(
             }
             window.removeEventListener('resize', handleResize);
 
+            // Dispose scene objects (geometries, materials, textures)
+            if (sceneRef.current) {
+                sceneRef.current.traverse((obj) => {
+                    if (obj instanceof THREE.Mesh) {
+                        obj.geometry?.dispose();
+                        if (Array.isArray(obj.material)) {
+                            obj.material.forEach(mat => mat.dispose());
+                        } else if (obj.material) {
+                            obj.material.dispose();
+                        }
+                    }
+                });
+                sceneRef.current = null;
+            }
+
+            // Dispose controls
+            if (controlsRef.current) {
+                controlsRef.current.dispose();
+                controlsRef.current = null;
+            }
+
+            // Dispose gizmo
+            if (gizmoRef.current) {
+                gizmoRef.current.dispose();
+                gizmoRef.current = null;
+            }
             if (container && rendererRef.current?.domElement && 
                 container.contains(rendererRef.current.domElement)
             ) { 
                 container.removeChild(rendererRef.current.domElement);
             }
-
-            if (controlsRef.current) {
-                controlsRef.current.dispose();
-                controlsRef.current = null;
+            if (rendererRef.current) {
+                rendererRef.current.dispose();
+                rendererRef.current = null;
             }
-            gizmoRef.current.dispose();
+
+            // Clear camera ref
+            cameraRef.current = null;
         };
     }, [containerRef]);
 

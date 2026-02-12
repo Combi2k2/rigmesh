@@ -230,4 +230,3 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
         },
     };
 }
-

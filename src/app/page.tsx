@@ -1,15 +1,18 @@
 'use client';
 
 import { useRef, useCallback, useEffect, useState } from 'react';
-import { useMeshGen } from '@/hooks/meshgen';
-import { useScene, MeshData, SkelData } from '@/hooks/useScene';
-import { useViewSpace, ViewSpaceReturn } from '@/hooks/useViewSpace';
+import { useMeshGen } from '@/hooks/useMeshGen';
+import { SceneHooks } from '@/hooks/useScene';
 import MeshGenUI from '@/components/meshgenUI/MeshGenUI';
 import Scene from '@/components/main/Scene';
 import Canvas from '@/components/canvas';
+import MeshCutUI from '@/components/MeshCutUI';
+import MeshMergeUI from '@/components/MeshMergeUI';
 import { computeSkinWeightsGlobal } from '@/core/skin';
-import { Point, Vec2, Vec3 } from '@/interface';
+import { skinnedMeshFromData } from '@/utils/threeMesh';
+import { Point, Vec2, Vec3, MeshData, SkelData, MenuAction } from '@/interface';
 import * as THREE from 'three';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 export interface SkinnedMeshData {
     mesh3D: { vertices: { x: number; y: number; z: number }[]; faces: number[][] };
@@ -20,36 +23,31 @@ export interface SkinnedMeshData {
 }
 
 export default function Page() {
-    const sceneRef = useRef<THREE.Scene | null>(null);
-    const viewSpaceRefsRef = useRef<ViewSpaceReturn | null>(null);
+    const sceneApiRef = useRef<SceneHooks | null>(null);
     const processedMeshesRef = useRef<Set<string>>(new Set());
     const [showCanvas, setShowCanvas] = useState(false);
     const [isSceneReady, setIsSceneReady] = useState(false);
-
-    const sceneHooks = useScene(sceneRef as React.RefObject<THREE.Scene>);
+    const [showRigUI, setShowRigUI] = useState(false);
+    const [riggingMesh, setRiggingMesh] = useState<THREE.SkinnedMesh | null>(null);
+    const [showCutUI, setShowCutUI] = useState(false);
+    const [cuttingMesh, setCuttingMesh] = useState<THREE.SkinnedMesh | null>(null);
+    const [showMergeUI, setShowMergeUI] = useState(false);
+    const [mergingMeshes, setMergingMeshes] = useState<[THREE.SkinnedMesh, THREE.SkinnedMesh] | null>(null);
     const meshGen = useMeshGen();
     const [exportedData, setExportedData] = useState<SkinnedMeshData | null>(null);
+    const sceneContainerRef = useRef<HTMLDivElement>(null);
 
     // When mesh gen completes (step > 5) and scene is ready, create skinned mesh and add to scene
     useEffect(() => {
         const { currentStep, mesh3D, skeleton } = meshGen.state;
-        if (currentStep <= 5 || !mesh3D || !skeleton || !sceneRef.current || !isSceneReady) return;
+        if (currentStep <= 5 || !mesh3D || !skeleton || !sceneApiRef.current || !isSceneReady) return;
 
         const meshKey = `${mesh3D[0].length}-${mesh3D[1].length}-${skeleton[0].length}`;
         if (processedMeshesRef.current.has(meshKey)) return;
         processedMeshesRef.current.add(meshKey);
 
         const skinWeights = computeSkinWeightsGlobal(mesh3D, skeleton);
-        const nBones = skeleton[1].length;
-        const skinIndices: number[][] = skinWeights.map((weights) =>
-            Array.from({ length: nBones }, (_, i) => i)
-                .map((boneIdx) => ({ boneIdx, weight: weights[boneIdx] }))
-                .sort((a, b) => b.weight - a.weight)
-                .slice(0, 4)
-                .map((item) => item.boneIdx)
-        );
 
-        // Store data for export
         const data: SkinnedMeshData = {
             mesh3D: {
                 vertices: mesh3D[0].map((v) => ({ x: v.x, y: v.y, z: v.z })),
@@ -59,42 +57,77 @@ export default function Page() {
                 joints: skeleton[0].map((j) => ({ x: j.x, y: j.y, z: j.z })),
                 bones: skeleton[1],
             },
-            skinWeights,
-            skinIndices,
+            skinWeights: skinWeights.map((w) => [...w]),
+            skinIndices: skinWeights.map((weights) =>
+                Array.from({ length: weights.length }, (_, i) => i)
+                    .sort((a, b) => weights[b] - weights[a])
+                    .slice(0, 4)
+            ),
             version: '1.0',
         };
         setExportedData(data);
 
-        const skinnedMesh = sceneHooks.createSkinnedMesh(mesh3D, skeleton, skinWeights, skinIndices);
-        if (skinnedMesh) sceneHooks.addSkinnedMesh(skinnedMesh);
-    }, [meshGen.state.currentStep, meshGen.state.mesh3D, meshGen.state.skeleton, sceneHooks, isSceneReady]);
+        const skinnedMesh = skinnedMeshFromData({ mesh: mesh3D, skel: skeleton, skinWeights, skinIndices: null });
+        sceneApiRef.current.insertObject(skinnedMesh);
+    }, [meshGen.state.currentStep, meshGen.state.mesh3D, meshGen.state.skeleton, isSceneReady]);
 
-    const handleSceneReady = useCallback((refs: ViewSpaceReturn) => {
-        viewSpaceRefsRef.current = refs;
-        // Keep sceneRef.current in sync with the actual scene from useViewSpace
-        sceneRef.current = refs.sceneRef.current;
+    const handleSceneReady = useCallback((api: SceneHooks) => {
+        sceneApiRef.current = api;
         setIsSceneReady(true);
     }, []);
 
-    const handleMenuContext = useCallback(
-        (context: typeof sceneHooks.menuContext) => {
-            if (!context) return;
-            const { selectedMeshes, selectedAction } = context;
-            switch (selectedAction) {
+    const handleMeshCutComplete = useCallback((meshes: THREE.SkinnedMesh[]) => {
+        meshes.forEach((mesh) => {
+            if (mesh.material instanceof THREE.MeshStandardMaterial) {
+                mesh.material.color.setHex(0xffffff);
+            }
+            sceneApiRef.current?.insertObject(mesh);
+        });
+        if (cuttingMesh) sceneApiRef.current?.removeObject(cuttingMesh);
+        setShowCutUI(false);
+        setCuttingMesh(null);
+    }, [cuttingMesh]);
+
+    const handleMeshCutCancel = useCallback(() => {
+        setShowCutUI(false);
+        setCuttingMesh(null);
+    }, []);
+
+    const handleMenuAction = useCallback(
+        (action: MenuAction, meshes: THREE.SkinnedMesh[]) => {
+            if (!meshes || meshes.length === 0) return;
+
+            switch (action) {
                 case 'copy':
-                    break; // TODO
+                    const clonedMesh = SkeletonUtils.clone(meshes[0]);
+                    sceneApiRef.current?.insertObject(clonedMesh);
+                    break;
                 case 'delete':
-                    selectedMeshes.forEach((m) => sceneHooks.delSkinnedMesh(m));
+                    meshes.forEach((mesh) => sceneApiRef.current?.removeObject(mesh));
                     break;
                 case 'rig':
-                    break; // TODO
+                    if (meshes.length > 0) {
+                        setRiggingMesh(meshes[0]);
+                        setShowRigUI(true);
+                    }
+                    break;
                 case 'cut':
-                    break; // TODO
+                    if (meshes.length > 0) {
+                        setCuttingMesh(meshes[0]);
+                        setShowCutUI(true);
+                    }
+                    break;
                 case 'merge':
-                    break; // TODO
+                    if (meshes.length >= 2) {
+                        setMergingMeshes([meshes[0], meshes[1]]);
+                        setShowMergeUI(true);
+                    } else {
+                        console.warn('Merge requires 2 meshes, got', meshes.length);
+                    }
+                    break;
             }
         },
-        [sceneHooks]
+        []
     );
 
     const handlePathComplete = useCallback(
@@ -128,7 +161,7 @@ export default function Page() {
             const file = event.target.files?.[0];
             if (!file) return;
 
-            if (!isSceneReady || !sceneRef.current) {
+            if (!isSceneReady || !sceneApiRef.current) {
                 alert('Scene is not ready yet. Please wait for the scene to load.');
                 event.target.value = '';
                 return;
@@ -138,12 +171,12 @@ export default function Page() {
             reader.onload = (e) => {
                 try {
                     const data = JSON.parse(e.target?.result as string) as SkinnedMeshData;
-                    
+
                     // Validate data structure
                     if (!data.mesh3D || !data.skeleton || !data.skinWeights || !data.skinIndices) {
                         throw new Error('Invalid file format: missing required fields');
                     }
-                    
+
                     // Convert back to Vec3 format
                     const mesh3D: MeshData = [
                         data.mesh3D.vertices.map((v) => new Vec3(v.x, v.y, v.z)),
@@ -154,19 +187,9 @@ export default function Page() {
                         data.skeleton.bones,
                     ];
 
-                    // Create and add skinned mesh
-                    const skinnedMesh = sceneHooks.createSkinnedMesh(
-                        mesh3D,
-                        skeleton,
-                        data.skinWeights,
-                        data.skinIndices
-                    );
-                    if (skinnedMesh) {
-                        sceneHooks.addSkinnedMesh(skinnedMesh);
-                        setExportedData(data);
-                    } else {
-                        alert('Failed to create skinned mesh from imported data.');
-                    }
+                    const skinnedMesh = skinnedMeshFromData({ mesh: mesh3D, skel: skeleton, skinWeights: data.skinWeights, skinIndices: data.skinIndices });
+                    sceneApiRef.current.insertObject(skinnedMesh);
+                    // setExportedData({ mesh: mesh3D, skel: skeleton, skinWeights: data.skinWeights, skinIndices: data.skinIndices, version: data.version });
                 } catch (error) {
                     console.error('Failed to load mesh data:', error);
                     alert(`Failed to load mesh data: ${error instanceof Error ? error.message : 'Invalid file format'}`);
@@ -176,14 +199,37 @@ export default function Page() {
             // Reset input so same file can be selected again
             event.target.value = '';
         },
-        [sceneHooks, isSceneReady]
+        [isSceneReady]
     );
 
     const isMeshGenMode = meshGen.state.currentStep <= 5;
 
+    // Trigger window resize event when scene becomes visible to force renderer resize
+    useEffect(() => {
+        if (!isMeshGenMode && sceneContainerRef.current) {
+            // Small delay to ensure DOM has updated
+            const timeoutId = setTimeout(() => {
+                window.dispatchEvent(new Event('resize'));
+            }, 50);
+            return () => clearTimeout(timeoutId);
+        }
+    }, [isMeshGenMode]);
+
     return (
         <div className="relative h-screen w-full overflow-hidden">
-            {isMeshGenMode ? (
+            {/* Always keep Scene mounted to preserve meshes, just hide it during meshgen */}
+            <div
+                ref={sceneContainerRef}
+                className="h-full w-full"
+                style={{ display: isMeshGenMode ? 'none' : 'block' }}
+            >
+                <Scene
+                    onSceneReady={handleSceneReady}
+                    onMenuAction={handleMenuAction}
+                    className="h-full w-full"
+                />
+            </div>
+            {isMeshGenMode && (
                 <MeshGenUI
                     state={meshGen.state}
                     params={meshGen.params}
@@ -192,18 +238,43 @@ export default function Page() {
                     onParamChange={meshGen.onParamChange}
                     onCancel={meshGen.onReset}
                 />
-            ) : (
-                <Scene
-                    onSceneReady={handleSceneReady}
-                    setMenuContext={handleMenuContext}
-                    className="h-full w-full"
-                />
             )}
 
             {showCanvas && (
                 <div className="absolute inset-0 z-50 bg-white dark:bg-gray-900">
                     <Canvas onPathComplete={handlePathComplete} />
                 </div>
+            )}
+
+            {showCutUI && cuttingMesh && (
+                <MeshCutUI
+                    skinnedMesh={cuttingMesh}
+                    onComplete={handleMeshCutComplete}
+                    onCancel={handleMeshCutCancel}
+                />
+            )}
+
+            {showMergeUI && mergingMeshes && (
+                <MeshMergeUI
+                    mesh1={mergingMeshes[0]}
+                    mesh2={mergingMeshes[1]}
+                    onComplete={(mergedMesh) => {
+                        // Reset color to white before adding to main scene
+                        if (mergedMesh.material instanceof THREE.MeshStandardMaterial) {
+                            mergedMesh.material.color.setHex(0xffffff);
+                        }
+                        sceneApiRef.current?.insertObject(mergedMesh);
+                        // Remove the original meshes
+                        sceneApiRef.current?.removeObject(mergingMeshes[0]);
+                        sceneApiRef.current?.removeObject(mergingMeshes[1]);
+                        setShowMergeUI(false);
+                        setMergingMeshes(null);
+                    }}
+                    onCancel={() => {
+                        setShowMergeUI(false);
+                        setMergingMeshes(null);
+                    }}
+                />
             )}
 
             {/* Control buttons */}

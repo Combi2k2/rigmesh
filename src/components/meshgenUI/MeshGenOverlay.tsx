@@ -3,9 +3,10 @@
 import { useRef, useEffect, useState } from 'react';
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
-import { MeshGenState } from '@/hooks/meshgen';
+import { MeshGenState } from '@/hooks/useMeshGen';
 import { Point } from '@/interface';
 import ViewSpace, { ViewSpaceReturn } from '@/components/ViewSpace';
+import { createSkeleton } from '@/utils/threeSkel';
 
 const COLORS = {
     BACKGROUND: 0x1a1a2e,
@@ -194,45 +195,8 @@ export default function MeshGenOverlay({ state }: { state: MeshGenState }) {
         scene.add(wireframe3dRef.current);
     };
     const renderStep5 = (scene: THREE.Scene, skeleton: [Point[], [number, number][]]) => {
-        const [joints, bones] = skeleton;
-        if (joints.length === 0 || bones.length === 0) return;
-
-        const skeletonGroup = new THREE.Group();
-        // Set render order to ensure skeleton renders after mesh
-        skeletonGroup.renderOrder = 1000;
-
-        // Render bones as lines
-        for (const [parentIdx, childIdx] of bones) {
-            const parent = joints[parentIdx];
-            const child = joints[childIdx];
-
-            const geometry = new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(parent.x, parent.y, parent.z || 0),
-                new THREE.Vector3(child.x, child.y, child.z || 0)
-            ]);
-            const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ 
-                color: COLORS.SKELETON,
-                linewidth: 3,
-                depthTest: false, // Always render on top
-                depthWrite: false
-            }));
-            skeletonGroup.add(line);
-        }
-
-        // Render joints as spheres (reuse geometry and material for efficiency)
-        const sphereGeometry = new THREE.SphereGeometry(1, 8, 8);
-        const sphereMaterial = new THREE.MeshBasicMaterial({ 
-            color: COLORS.SKELETON,
-            depthTest: false, // Always render on top
-            depthWrite: false
-        });
-        
-        for (const joint of joints) {
-            const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-            sphere.position.set(joint.x, joint.y, joint.z || 0);
-            skeletonGroup.add(sphere);
-        }
-
+        if (skeleton[0].length === 0 || skeleton[1].length === 0) return;
+        const skeletonGroup = createSkeleton(skeleton);
         scene.add(skeletonGroup);
         skeletonRef.current = skeletonGroup;
     };
