@@ -7,6 +7,7 @@ import Scene from '@/components/main/Scene';
 import Canvas from '@/components/canvas';
 import MeshCutUI from '@/components/MeshCutUI';
 import MeshMergeUI from '@/components/MeshMergeUI';
+import SkelOpsUI from '@/components/SkelOps';
 import { Point, Vec2, Vec3, MeshData, SkelData, MenuAction } from '@/interface';
 import { skinnedMeshFromData } from '@/utils/threeMesh';
 import * as THREE from 'three';
@@ -31,6 +32,8 @@ export default function Page() {
     const [cuttingMesh, setCuttingMesh] = useState<THREE.SkinnedMesh | null>(null);
     const [showMergeUI, setShowMergeUI] = useState(false);
     const [mergingMeshes, setMergingMeshes] = useState<[THREE.SkinnedMesh, THREE.SkinnedMesh] | null>(null);
+    const [showSkelOpsUI, setShowSkelOpsUI] = useState(false);
+    const [skelOpsMesh, setSkelOpsMesh] = useState<THREE.SkinnedMesh | null>(null);
     const [exportedData, setExportedData] = useState<SkinnedMeshData | null>(null);
     const sceneContainerRef = useRef<HTMLDivElement>(null);
 
@@ -90,10 +93,34 @@ export default function Page() {
                         console.warn('Merge requires 2 meshes, got', meshes.length);
                     }
                     break;
+                case 'editSkeleton':
+                    if (meshes.length > 0) {
+                        setSkelOpsMesh(meshes[0]);
+                        setShowSkelOpsUI(true);
+                    }
+                    break;
             }
         },
         []
     );
+
+    const handleSkelOpsComplete = useCallback((result: THREE.SkinnedMesh | THREE.SkinnedMesh[]) => {
+        const mesh = Array.isArray(result) ? result[0] : result;
+        if (mesh && skelOpsMesh) {
+            if (mesh.material instanceof THREE.MeshStandardMaterial) {
+                mesh.material.color.setHex(0xffffff);
+            }
+            sceneApiRef.current?.removeObject(skelOpsMesh);
+            sceneApiRef.current?.insertObject(mesh);
+        }
+        setShowSkelOpsUI(false);
+        setSkelOpsMesh(null);
+    }, [skelOpsMesh]);
+
+    const handleSkelOpsCancel = useCallback(() => {
+        setShowSkelOpsUI(false);
+        setSkelOpsMesh(null);
+    }, []);
 
     const handlePathComplete = useCallback((path: Point[]) => {
         setMeshGenPath(path as Vec2[]);
@@ -241,6 +268,14 @@ export default function Page() {
                         setShowMergeUI(false);
                         setMergingMeshes(null);
                     }}
+                />
+            )}
+
+            {showSkelOpsUI && skelOpsMesh && (
+                <SkelOpsUI
+                    skinnedMesh={skelOpsMesh}
+                    onComplete={handleSkelOpsComplete}
+                    onCancel={handleSkelOpsCancel}
                 />
             )}
 
