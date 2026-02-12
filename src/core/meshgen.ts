@@ -2,9 +2,10 @@ import * as geo2d from '../utils/geo2d';
 import * as geo3d from '../utils/geo3d';
 import Queue from '../utils/misc';
 import Vector from '@/lib/linalg/vector';
-import { Point, Vec2 } from '../interface/point';
-
-const { Mesh } = require('@/lib/geometry/mesh');
+import { Point, Vec2, Vec3 } from '../interface/point';
+import { MeshData } from '../interface';
+import { SkelData } from '../interface';
+import { buildLaplacianTopology, smooth } from '@/utils/solver';
 
 // @ts-ignore - CommonJS module
 var Graph = require("graphlib").Graph;
@@ -31,10 +32,11 @@ function reparameterize(points: Point[], isodistance: number) {
         }
         currentDistance -= isodistance;
 
-        let index = Math.max(1, Math.min(points.length - 1, currentPtr));
-        let a = points[index - 1];
-        let b = points[index];
-        let t = Math.max(0, currentDistance) / a.minus(b).norm();
+        const index = Math.max(1, Math.min(points.length - 1, currentPtr));
+        const a = points[index - 1];
+        const b = points[index];
+        const d = a.minus(b).norm();
+        const t = d > 1e-4 ? Math.max(0, currentDistance) / d : 0.5;
         
         newPath.push(new Vec2(
             t * a.x + (1-t) * b.x,
@@ -48,8 +50,7 @@ class MeshGen {
     private chordAxis: Vector[] = [];
     private chordDirs: Vector[] = [];
     private chordLengths: number[] = [];
-    private chordGraph: any;
-    private chordMap: Map<string, number> = new Map();
+    private chordGraph: any = null;
     private chordCaps: number[][] = [];
     private chordJunctions: number[][] = [];
     private chordOffset: number[] = [];
@@ -57,179 +58,83 @@ class MeshGen {
 
     private allVertices: Vector[] = [];
     private allFaces: number[][] = [];
+    private mesh2D: [Vec2[], number[][]] = [[], []];
 
-    private triangulation: any;
-
-    constructor(private polygon: Point[], private isodistance: number, private branchMinLength: number = 5) {
-        this.buildTriangulation();
-        this.pruneTriangulation();
-    }
-    private buildTriangulation() {
-        if (geo2d.ccw(this.polygon[0], this.polygon[1], this.polygon[2]))
-            this.polygon = this.polygon.reverse();
-
-        let centroid = this.polygon.reduce((acc, p) => acc.plus(p), new Vec2(0, 0));
-        centroid.x /= this.polygon.length;
-        centroid.y /= this.polygon.length;
+    constructor(polygon: Point[], private isodistance: number) {
+        if (geo2d.isClockwise(polygon))
+            polygon.reverse();
         
-        this.polygon = this.polygon.map(p => p.minus(centroid));
-        this.polygon = reparameterize(this.polygon, 2*this.isodistance);
-        this.triangulation = new (Mesh as any)();
-        this.triangulation.build({
-            v: this.polygon.map(p => new Vector(p.x, p.y, 0)),
-            f: geo2d.CDT(this.polygon).flat()
-        });
-    }
-    private pruneTriangulation() {
-        let nF = this.triangulation.faces.length;
-        let toLeaf = new Array(nF).fill(0);
-        let toPrune = new Array(nF).fill(false);
-        let visited = new Array(nF).fill(false);
-        let queue = new Queue();
-        let barycenter = new Array(nF).fill({x: 0, y: 0});
-
-        for (let i = 0; i < nF; i++) {
-            let f = this.triangulation.faces[i];
-
-            for (let h of f.adjacentHalfedges()) {
-                barycenter[i].x += this.polygon[h.vertex.index].x;
-                barycenter[i].y += this.polygon[h.vertex.index].y;
-            }
-            barycenter[i].x /= 3;
-            barycenter[i].y /= 3;
-
-            if (f.adjacentFaces().length === 1) {
-                toLeaf[i] = 0;
-                queue.push(i);
-            }
-        }
-        
-        while (!queue.empty()) {
-            let i = queue.pop();
-            let f = this.triangulation.faces[i];
-            let adjFaces = [];
-            visited[i] = true;
-
-            for (let h of f.adjacentHalfedges())
-                if (!h.twin.onBoundary)
-                    adjFaces.push(h.twin.face);
-            
-            for (let fc of adjFaces) {
-                let ic = fc.index;
-                if (visited[ic]) {
-                    toLeaf[i] = Math.max(
-                        toLeaf[i],
-                        toLeaf[ic] + barycenter[i].minus(barycenter[ic]).norm()
-                    );
-                }
-            }
-            
-            if (adjFaces.length > 2) {
-                let pruned = false;
-                for (let fc of adjFaces) {
-                    let ic = fc.index;
-                    if (visited[ic]) {
-                        if (toLeaf[ic] < this.branchMinLength) {
-                            toPrune[ic] = true;
-                            let st = [[ic, i]];
-                            while (st.length > 0) {
-                                let [u, p] = st.pop() as [number, number];
-
-                                for (let h of this.triangulation.faces[u].adjacentHalfedges()) {
-                                    let v = h.twin.face.index;
-                                    if (v !== p && !toPrune[v]) {
-                                        toPrune[v] = true;
-                                        st.push([v, u]);
-                                    }
-                                }
-                            }
-                            pruned = true;
-                            continue;
-                        }
-                    }
-                }
-                if (!pruned)
-                    continue;
-            }
-            for (let fc of adjFaces) {
-                let ic = fc.index;
-                if (!visited[ic])
-                    queue.push(ic);
-            }
-        }
-        let newFaces = [];
-        for (let i = 0; i < nF; i++)
-            if (!toPrune[i]) {
-                for (let v of this.triangulation.faces[i].adjacentVertices())
-                    newFaces.push(v.index);
-            }
-        this.triangulation.build({
-            v: this.polygon.map(p => new Vector(p.x, p.y, 0)),
-            f: newFaces
-        });
+        const centroid = polygon.reduce((acc, p) => acc.plus(p), new Vec2(0, 0)).over(polygon.length);
+        polygon = polygon.map(p => p.minus(centroid));
+        polygon = reparameterize(polygon, 2*this.isodistance);
+        this.mesh2D = [
+            polygon.map(p => new Vec2(p.x, p.y)),
+            cdt2d(
+                polygon.map(p => [p.x, p.y]),
+                polygon.map((_, index) => [index, (index+1)%polygon.length]),
+                {exterior: false}
+            )
+        ]
+        this.buildChordGraph();
     }
     private buildChordGraph() {
-        let chordCount = 0;
+        if (this.chordGraph !== null)
+            return;
+
+        const g = new Graph();
+        const idxMap = new Map<string, number>();
+
+        this.mesh2D[0].forEach((v: Vec2, i: number) => g.setNode(i, new Vec3(v.x, v.y, 0)));
+        this.mesh2D[1].forEach((f: [number, number, number]) => {
+            g.setEdge(f[0], f[1], f[2]);
+            g.setEdge(f[1], f[2], f[0]);
+            g.setEdge(f[2], f[0], f[1]);
+        });
         this.chordGraph = new Graph();
-        this.chordDirs = [];
-        this.chordAxis = [];
-        this.chordLengths = [];
-        this.chordCaps = [];
-        this.chordJunctions = [];
-        this.chordOffset = [];
-        this.chordBufSize = [];
-        
-        for (let e of this.triangulation.edges) {
-            if (e.onBoundary())
+
+        for (const e of g.edges()) {
+            const x = Number(e.v);
+            const y = Number(e.w);
+            if (!g.hasEdge(y, x) || x > y)
                 continue;
-            
-            this.chordGraph.setNode(chordCount);
-            let h = e.halfedge;
-            let i0 = h.vertex.index;
-            let i1 = h.twin.vertex.index;
 
-            let key = `${Math.min(i0, i1)}-${Math.max(i0, i1)}`;
-            this.chordMap.set(key, chordCount);
+            const key = `${x}-${y}`;
+            idxMap.set(key, idxMap.size);
 
-            let v1 = this.polygon[i0];
-            let v2 = this.polygon[i1];
+            const v1 = g.node(x);
+            const v2 = g.node(y);
+            const dir = v2.minus(v1);
+            const len = v1.minus(v2).norm();
+            const center = v1.plus(v2).times(0.5);
 
-            this.chordLengths.push(v1.minus(v2).norm());
-            this.chordAxis.push(new Vector(
-                (v1.x + v2.x) / 2,
-                (v1.y + v2.y) / 2
-            ));
-            this.chordDirs.push((new Vector(
-                v2.x - v1.x,
-                v2.y - v1.y
-            )).unit());
-            chordCount++;
+            this.chordAxis.push(center);
+            this.chordDirs.push(dir);
+            this.chordLengths.push(len);
+            this.chordGraph.setNode(idxMap.size-1, [center, dir]);
         }
-        for (let f of this.triangulation.faces) {
+        for (const e of g.edges()) {
+            const x = Number(e.v);
+            const y = Number(e.w);
+            const z = g.edge(x, y);
+            if (x > y || x > z)  continue;
+
+            const i0 = idxMap.get(`${x}-${y}`);
+            const i1 = idxMap.get(`${x}-${z}`);
+            const i2 = idxMap.get(`${Math.min(y, z)}-${Math.max(y, z)}`);
+            
             let chordIndices = [];
             let chordCorner = null;
 
-            for (let e of f.adjacentEdges()) {
-                let h = e.halfedge;
-                let i0 = h.vertex.index;
-                let i1 = h.next.vertex.index;
-                let i2 = h.next.next.vertex.index;
-                if (i0 > i1) {
-                    [i0, i1] = [i1, i0];
-                }
-                let key = `${i0}-${i1}`;
-                let chordIndex = this.chordMap.get(key);
-                if (chordIndex !== undefined) {
-                    chordIndices.push(chordIndex);
-                    chordCorner = i2;
-                }
-            }
+            if (i0 !== undefined)   {chordIndices.push(i0); chordCorner = z;}
+            if (i1 !== undefined)   {chordIndices.push(i1); chordCorner = y;}
+            if (i2 !== undefined)   {chordIndices.push(i2); chordCorner = x;}
+            
             if (chordIndices.length === 2) {
                 this.chordGraph.setEdge(chordIndices[0], chordIndices[1]);
                 this.chordGraph.setEdge(chordIndices[1], chordIndices[0]);
             }
             if (chordIndices.length === 1)  this.chordCaps.push([chordIndices[0], chordCorner]);
-            if (chordIndices.length === 3)  this.chordJunctions.push(chordIndices);
+            if (chordIndices.length === 3)  this.chordJunctions.push([i0, i1, i2]);
         }
     }
     private generateCircle(c: Vector, d: Vector, r: number) {
@@ -326,31 +231,28 @@ class MeshGen {
         }
         return faces;
     }
-    generateSkeleton(boneDeviationThreshold: number, boneLengthThreshold: number, algo: 'chord' | 'mat') {
-        let g = new Graph();
-        let Q = new Queue();
+    generateSkeleton(boneDeviationThreshold: number, boneLengthThreshold: number, bonePruningThreshold: number) {
+        const g = new Graph();
+        const Q = new Queue();
 
-        if (algo === 'chord') {
-            let vertIdx = this.chordAxis.length;
-            for (let i = 0; i < this.chordAxis.length; i++)
-                g.setNode(i, this.chordAxis[i]);
+        let vertIdx = this.chordAxis.length;
+        for (let i = 0; i < this.chordAxis.length; i++)
+            g.setNode(i, this.chordAxis[i]);
 
-            for (let e of this.chordGraph.edges())
-                g.setEdge(e.v, e.w, true);
+        for (let e of this.chordGraph.edges())
+            g.setEdge(e.v, e.w, true);
 
-            for (let [c0, c1, c2] of this.chordJunctions) {
-                let p0 = g.node(c0);
-                let p1 = g.node(c1);
-                let p2 = g.node(c2);
-                let barycenter = p0.plus(p1).plus(p2).times(1/3);
-                g.setNode(vertIdx, barycenter);
-                g.setEdge(c0, vertIdx, true);   g.setEdge(vertIdx, c0, true);
-                g.setEdge(c1, vertIdx, true);   g.setEdge(vertIdx, c1, true);
-                g.setEdge(c2, vertIdx, true);   g.setEdge(vertIdx, c2, true);
+        for (let [c0, c1, c2] of this.chordJunctions) {
+            let p0 = g.node(c0);
+            let p1 = g.node(c1);
+            let p2 = g.node(c2);
+            let barycenter = p0.plus(p1).plus(p2).times(1/3);
+            g.setNode(vertIdx, barycenter);
+            g.setEdge(c0, vertIdx, true);   g.setEdge(vertIdx, c0, true);
+            g.setEdge(c1, vertIdx, true);   g.setEdge(vertIdx, c1, true);
+            g.setEdge(c2, vertIdx, true);   g.setEdge(vertIdx, c2, true);
 
-                vertIdx++;
-            }
-        } else {
+            vertIdx++;
         }
         for (let u of g.nodes())
             Q.push(u);
@@ -445,6 +347,19 @@ class MeshGen {
                     Q.push([u, e.w]);
             }
         }
+        for (let u of g.nodes())    if (g.outEdges(u).length === 1) {
+            Q.push([u, bonePruningThreshold]);
+        }
+        while (Q.size() > 0) {
+            const [u, d] = Q.pop();
+            if (!g.hasNode(u)) continue;
+            const p = g.outEdges(u)[0].w;
+            const dist = g.node(p).minus(g.node(u)).norm();
+            if (dist < d) {
+                g.removeNode(u);
+                Q.push([p, d - dist]);
+            }
+        }
         let idxMap = new Map();
         let joints = [];
         let bones = [];
@@ -530,43 +445,39 @@ class MeshGen {
         }
     }
     stitchCaps() {
-        for (let [i, o] of this.chordCaps) {
-            let d = this.chordDirs[i];
-            let ci = this.chordAxis[i];
-            let ri = this.chordLengths[i] / 2;
+        for (let [index, corner] of this.chordCaps) {
+            let d = this.chordDirs[index];
+            let ci = this.chordAxis[index];
+            let ri = this.chordLengths[index] / 2;
             let co = new Vector(
-                this.polygon[o].x,
-                this.polygon[o].y,
+                this.mesh2D[0][corner].x,
+                this.mesh2D[0][corner].y,
                 0
             );
-            let h = co.minus(ci).norm();
-
-            let capOffset = [this.chordOffset[i]];
+            let capOffset = [this.chordOffset[index]];
             let capDisc: Vector[][] = [
                 this.allVertices.slice(
-                    this.chordOffset[i],
-                    this.chordOffset[i] + this.chordBufSize[i]
+                    this.chordOffset[index],
+                    this.chordOffset[index] + this.chordBufSize[index]
             )];
 
             let r = ri;
 
             while (r > 1.2 * this.isodistance) {
                 r -= this.isodistance;
-                let disc = this.generateCircle(co.plus(ci.minus(co).times(r/ri)), d, r);
+                let disc = this.generateCircle(co.plus(ci.minus(co).times((r/ri)**2)), d, r);
                 
                 capDisc.push(disc);
                 capOffset.push(this.allVertices.length);
                 this.chordOffset.push(this.allVertices.length);
                 this.chordBufSize.push(disc.length);
-
-                for (let v of disc)
-                    this.allVertices.push(v);
+                this.allVertices.push(...disc);
             }
             capDisc.push([co]);
             capOffset.push(this.allVertices.length);
-            this.allVertices.push(co);
             this.chordOffset.push(this.allVertices.length);
             this.chordBufSize.push(1);
+            this.allVertices.push(co);
             
             for (let j = 1; j < capDisc.length; j++) {
                 let n1 = capDisc[j-1].length;
@@ -785,25 +696,25 @@ class MeshGen {
             }
         }
     }
-    runChordSmoothing(iterations: number = 50, alpha: number = 0.5) {
-        this.buildChordGraph();
-        let nC = this.chordGraph.nodeCount();
-        for (let i = 0; i < nC; i++) {
-            let dir = this.chordDirs[i];
+    runChordSmoothing(iterations: number = 20, alpha: number = 0.5) {
+        const n = this.chordGraph.nodeCount();
+
+        for (let i = 0; i < n; i++) {
+            const [center, dir] = this.chordGraph.node(i);
+            this.chordAxis[i] = new Vector(center.x, center.y, 0);
             this.chordDirs[i] = new Vector(
                 dir.x * dir.x - dir.y * dir.y,
                 2 * dir.x * dir.y
-            );
-            this.chordDirs[i].normalize();
+            ).unit();
         }
         for (let _ = 0; _ < iterations; _++) {
             geo3d.runLaplacianSmooth(this.chordDirs, [], this.chordGraph, alpha);
             geo3d.runLaplacianSmooth(this.chordAxis, [], this.chordGraph, alpha);
             
-            for (let j = 0; j < nC; j++)
+            for (let j = 0; j < n; j++)
                 this.chordDirs[j].normalize();
         }
-        for (let i = 0; i < nC; i++) {
+        for (let i = 0; i < n; i++) {
             let dir = this.chordDirs[i];
             let nx = Math.sqrt((1 + dir.x) / 2);
             let ny = Math.sqrt((1 - dir.x) / 2);
@@ -815,30 +726,38 @@ class MeshGen {
         }
     }
     runMeshSmoothing(V: Vector[], F: number[][], factor: number = 0.1) {
-        let nC = this.chordGraph.nodeCount();
-        let constraints = [];
-        for (let i = 0; i < nC; i++)
-        for (let j = 0; j < this.chordBufSize[i]; j++)
-            constraints.push(this.chordOffset[i] + j);
-
-        geo3d.runLeastSquaresMesh(V, F, constraints, factor);
+        geo3d.runFaceOrientation(this.allVertices, this.allFaces);
         geo3d.runFaceOrientation(V, F);
+        const n = this.chordOffset.length;
+        const lap = buildLaplacianTopology([[], this.allFaces]);
+        const chordPoints = [];
+        for (let i = 0; i < this.chordBufSize.length; i++)
+        for (let j = 0; j < this.chordBufSize[i]; j++)
+            chordPoints.push(this.chordOffset[i] + j);
+
+        const weakX = chordPoints.map(j => [j, this.allVertices[j].x] as [number, number]);
+        const weakY = chordPoints.map(j => [j, this.allVertices[j].y] as [number, number]);
+        const weakZ = chordPoints.map(j => [j, this.allVertices[j].z] as [number, number]);
+
+        const resX = smooth(lap, weakX, [], factor);
+        const resY = smooth(lap, weakY, [], factor);
+        const resZ = smooth(lap, weakZ, [], factor);
+
+        for (let i = 0; i < V.length; i++) {
+            V[i] = new Vec3(
+                resX.get(i)!,
+                resY.get(i)!,
+                resZ.get(i)!
+            );
+        }
     }
     getChords() {
         return [this.chordAxis.slice(), this.chordDirs.slice(), this.chordLengths.slice()];
     }
     getMesh2D() {
-        const faces: number[][] = [];
-        for (const f of this.triangulation.faces) {
-            const face: number[] = [];
-            for (const v of f.adjacentVertices()) {
-                face.push(v.index);
-            }
-            faces.push(face);
-        }
-        return [this.polygon.slice(), faces];
+        return [this.mesh2D[0].slice(), this.mesh2D[1].slice()];
     }
-    getMesh3D() {
+    getMesh3D(): MeshData {
         return [this.allVertices.slice(), this.allFaces.slice()];
     }
     vertCount() {
@@ -846,6 +765,14 @@ class MeshGen {
     }
     faceCount() {
         return this.allFaces.length;
+    }
+    getOffsetCap() {
+        const n = this.chordGraph.nodeCount();
+        return this.chordOffset[n-1] + this.chordBufSize[n-1];
+    }
+    getOffsetJunction() {
+        const n = this.chordBufSize.length;
+        return this.chordOffset[n-1] + this.chordBufSize[n-1];
     }
 }
 
