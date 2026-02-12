@@ -3,7 +3,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { MeshGen } from '@/core/meshgen';
 import { Vec2, Vec3 } from '@/interface';
+import { MeshData } from '@/interface';
+import { SkelData } from '@/interface';
+import { computeSkinWeightsGlobal } from '@/core/skin';
+import { skinnedMeshFromData } from '@/utils/threeMesh';
 import * as geo3d from '@/utils/geo3d';
+import * as THREE from 'three';
 
 export interface MeshGenState {
     currentStep: number;
@@ -17,28 +22,25 @@ export interface MeshGenState {
 
 export interface MeshGenParams {
     isodistance: number;
-    branchMinLength: number;
-    laplacianIterations: number;
+    laplacianIters: number;
     laplacianAlpha: number;
     smoothFactor: number;
     isometricIterations: number;
     isometricLength: number;
-    isometricLengthAuto: boolean;
     boneDevThreshold: number;
     boneLenThreshold: number;
-    skelAlgo: 'chord' | 'mat';
+    bonePruningThreshold: number;
 }
 
-export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void) {
+export function useMeshGen(onComplete?: (mesh: THREE.SkinnedMesh) => void) {
     const [latestPath, setLatestPath] = useState<Vec2[] | null>(null);
     const [currentStep, setCurrentStep] = useState<number>(0);
     
     const [isodistance, setIsodistance] = useState<number>(10);
-    const [branchMinLength, setBranchMinLength] = useState<number>(5);
     const [mesh2D, setMesh2D] = useState<[Vec2[], number[][]] | null>(null);
     const [mesh3D, setMesh3D] = useState<[Vec3[], number[][]] | null>(null);
     
-    const [laplacianIterations, setLaplacianIterations] = useState<number>(50);
+    const [laplacianIters, setLaplacianIters] = useState<number>(50);
     const [laplacianAlpha, setLaplacianAlpha] = useState<number>(0.5);
     const [chordData, setChordData] = useState<[Vec3[], Vec3[], number[]] | null>(null);
     
@@ -50,7 +52,6 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
     const [init4, setInit4] = useState<boolean>(false);
     const [isometricIterations, setIsometricIterations] = useState<number>(6);
     const [isometricLength, setIsometricLength] = useState<number>(5);
-    const [isometricLengthAuto, setIsometricLengthAuto] = useState<boolean>(true);
     const [V_mock3, setV_mock3] = useState<Vec3[]>([]);
     const [F_mock3, setF_mock3] = useState<number[][]>([]);
     const [V_mock4, setV_mock4] = useState<Vec3[]>([]);
@@ -59,26 +60,27 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
     const [skeleton, setSkeleton] = useState<[Vec3[], [number, number][]] | null>(null);
     const [boneDevThreshold, setBoneDevThreshold] = useState<number>(0.1);
     const [boneLenThreshold, setBoneLenThreshold] = useState<number>(5);
-    const [skelAlgo, setSkelAlgo] = useState<'chord' | 'mat'>('chord');
+    const [bonePruningThreshold, setBonePruningThreshold] = useState<number>(5);
   
     const meshGenRef = useRef<MeshGen | null>(null);
 
     const processStep1 = useCallback((path: Vec2[]) => {
-        const meshGen = new MeshGen(path, isodistance, branchMinLength);
+        const meshGen = new MeshGen(path, isodistance);
         meshGenRef.current = meshGen;
         const mesh2DData = meshGen.getMesh2D() as [Vec2[], number[][]];
         setMesh2D(mesh2DData);
-    }, [isodistance, branchMinLength]);
+        setIsometricLength(Math.max(5, isodistance));
+    }, [isodistance]);
 
     const processStep2 = useCallback(() => {
         if (!meshGenRef.current) return;
 
         const meshGen = meshGenRef.current;
-        meshGen.runChordSmoothing(laplacianIterations, laplacianAlpha);
+        meshGen.runChordSmoothing(laplacianIters, laplacianAlpha);
         const chords = meshGen.getChords() as [Vec3[], Vec3[], number[]];
         setChordData(chords);
         setInit3(false);
-    }, [laplacianIterations, laplacianAlpha]);
+    }, [laplacianIters, laplacianAlpha]);
 
     const preprocessStep3 = useCallback(() => {
         if (!meshGenRef.current) return;
@@ -115,10 +117,10 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
         const V = V_mock4.map(v => new Vec3(v.x, v.y, v.z));
         const F = F_mock4.map(f => [...f]);
 
-        const length = isometricLengthAuto ? -1 : isometricLength;
+        const length = isometricLength <= 5 ? -1 : isometricLength;
         geo3d.runIsometricRemesh(V, F, isometricIterations, length);
         setMesh3D([V, F]);
-    }, [isometricIterations, isometricLength, isometricLengthAuto, V_mock4, F_mock4]);
+    }, [isometricIterations, isometricLength, V_mock4, F_mock4]);
     
     const processStep5 = useCallback(() => {
         if (!meshGenRef.current) return;
@@ -126,9 +128,10 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
         setSkeleton(meshGenRef.current.generateSkeleton(
             boneDevThreshold,
             boneLenThreshold,
-            skelAlgo) as [Vec3[], [number, number][]]
+            bonePruningThreshold
+        ) as [Vec3[], [number, number][]]
         );
-    }, [boneDevThreshold, boneLenThreshold, skelAlgo]);
+    }, [boneDevThreshold, boneLenThreshold, bonePruningThreshold]);
     
     const handlePathComplete = useCallback((path: Vec2[]) => {
         setLatestPath(path);
@@ -178,11 +181,20 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
     ]);
     
     useEffect(() => {
-        if (currentStep > 5 && mesh3D && onMeshComplete) {
-            onMeshComplete(mesh3D);
+        if (currentStep > 5) {
+            if (onComplete && mesh3D && skeleton) {
+                const skinWeights = computeSkinWeightsGlobal(mesh3D, skeleton);
+                const mesh = skinnedMeshFromData({
+                    mesh: mesh3D,
+                    skel: skeleton,
+                    skinWeights,
+                    skinIndices: null,
+                });
+                onComplete(mesh);
+            }
             handleReset();
         }
-    }, [currentStep, mesh3D, onMeshComplete]);
+    }, [currentStep, mesh3D, skeleton, onComplete]);
 
     const state: MeshGenState = {
         currentStep,
@@ -196,16 +208,14 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
 
     const params: MeshGenParams = {
         isodistance,
-        branchMinLength,
-        laplacianIterations,
+        laplacianIters,
         laplacianAlpha,
         smoothFactor,
         isometricIterations,
         isometricLength,
-        isometricLengthAuto,
         boneDevThreshold,
         boneLenThreshold,
-        skelAlgo,
+        bonePruningThreshold,
     };
 
     return {
@@ -217,16 +227,14 @@ export function useMeshGen(onMeshComplete?: (mesh: [Vec3[], number[][]]) => void
         onReset: handleReset,
         onParamChange: {
             setIsodistance,
-            setBranchMinLength,
-            setLaplacianIterations,
+            setLaplacianIters,
             setLaplacianAlpha,
             setSmoothFactor,
             setIsometricIterations,
             setIsometricLength,
-            setIsometricLengthAuto,
             setBoneDevThreshold,
             setBoneLenThreshold,
-            setSkelAlgo,
+            setBonePruningThreshold,
         },
     };
 }

@@ -212,7 +212,7 @@ export function runFaceOrientation(vertices, faces) {
                 let u = f[f.length-1];
                 for (let v of f) {
                     if (u === x && v === y) {
-                        faces[k] = f.reverse();
+                        faces[k].reverse();
                         break;
                     }
                     if (u === y && v === x)
@@ -225,34 +225,34 @@ export function runFaceOrientation(vertices, faces) {
         }
     }
 }
-export function runLeastSquaresMesh(vertices, faces, constraints, factor = 1) {
-    let lap = buildLaplacianTopology([vertices, faces]);
+export function runLeastSquaresMesh(V, F, constraints, factor = 1) {
+    let lap = buildLaplacianTopology([V, F]);
     let smoothness = Math.log(factor);
 
     let results = ['x', 'y', 'z'].map(axis => {
-        let weak = constraints.map(j => [j, vertices[j][axis]]);
+        let weak = constraints.map(j => [j, V[j][axis]]);
         return smooth(lap, weak, [], smoothness);
     });
 
-    for (let i = 0; i < vertices.length; i++) {
-        vertices[i].x = results[0].get(i);
-        vertices[i].y = results[1].get(i);
-        vertices[i].z = results[2].get(i);
+    for (let i = 0; i < V.length; i++) {
+        V[i].x = results[0].get(i);
+        V[i].y = results[1].get(i);
+        V[i].z = results[2].get(i);
     }
 }
-export function runIsometricRemesh(vertices, faces, iterations = 6, length = -1) {
+export function runIsometricRemesh(V, F, iterations = 6, length = -1) {
     for (let t = 0; t < iterations; t++) {
         let g = new Graph();
 
-        for (let i = 0; i < vertices.length; i++)
-            g.setNode(i, vertices[i]);
+        for (let i = 0; i < V.length; i++)
+            g.setNode(i, V[i]);
         
         function setFace(a, b, c) {
             g.setEdge(a, b, String(c));
             g.setEdge(b, c, String(a));
             g.setEdge(c, a, String(b));
         }
-        for (let f of faces)
+        for (let f of F)
             setFace(f[0], f[1], f[2]);
     
         let L = 0;
@@ -387,11 +387,11 @@ export function runIsometricRemesh(vertices, faces, iterations = 6, length = -1)
             Q.push([x, u]);
         }
         let idxMap = new Map();
-        vertices.length = 0;
-        faces.length = 0;
+        V.length = 0;
+        F.length = 0;
 
         for (let u of g.nodes()) {
-            idxMap.set(u, vertices.length);
+            idxMap.set(u, V.length);
             let outDeg = 0;
 
             let p = g.node(u);
@@ -413,14 +413,14 @@ export function runIsometricRemesh(vertices, faces, iterations = 6, length = -1)
                 v = v.minus(N.times(v.dot(N)));
                 p = p.plus(v);
             }
-            vertices.push(p);
+            V.push(p);
         }
         for (let u of g.nodes())
         for (let e of g.outEdges(u)) {
             let v = e.w;
             let w = g.edge(u, v);
             if (u < v && u < w)
-                faces.push([
+                F.push([
                     idxMap.get(u),
                     idxMap.get(v),
                     idxMap.get(w)
