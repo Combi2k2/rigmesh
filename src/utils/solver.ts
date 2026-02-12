@@ -101,7 +101,7 @@ export function smooth(lap: [number, number, number][],
         const idxI = idxMap.get(i);
         const idxJ = idxMap.get(j);
         if (fixI)   continue;
-        if (fixJ)   b.set(b.get(idxI) - w * v, idxI);
+        if (fixJ)   b.set(b.get(idxI) - smoothness * w * v, idxI);
         else        T.addEntry(w * smoothness, idxI, idxJ);
     }
     let weakRow = col;

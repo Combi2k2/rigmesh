@@ -23,4 +23,4 @@ export interface Frame {
     basisV: Vec3;
 }
 
-export type MenuAction = 'copy' | 'delete' | 'rig' | 'cut' | 'merge';
+export type MenuAction = 'copy' | 'delete' | 'rig' | 'cut' | 'merge' | 'editSkeleton';
