@@ -347,17 +347,25 @@ class MeshGen {
                     Q.push([u, e.w]);
             }
         }
+        const toPrune = new Map<String, number>();
         for (let u of g.nodes())    if (g.outEdges(u).length === 1) {
-            Q.push([u, bonePruningThreshold]);
+            toPrune.set(u, bonePruningThreshold);
+            Q.push(u);
         }
         while (Q.size() > 0) {
-            const [u, d] = Q.pop();
-            if (!g.hasNode(u)) continue;
-            const p = g.outEdges(u)[0].w;
-            const dist = g.node(p).minus(g.node(u)).norm();
-            if (dist < d) {
-                g.removeNode(u);
-                Q.push([p, d - dist]);
+            const u = Q.pop();
+            const d = toPrune.get(u);
+            if (d < 0)  continue;
+            const neighbors = g.outEdges(u).map(e => e.w);
+            if (neighbors.length === 1) {
+                const p = neighbors[0];
+                const dist = g.node(p).minus(g.node(u)).norm();
+                if (dist < d) {
+                    toPrune.set(p, Math.min(d - dist, toPrune.get(p) || Infinity));
+                    toPrune.delete(u);
+                    g.removeNode(u);
+                    Q.push(p);
+                }
             }
         }
         let idxMap = new Map();
