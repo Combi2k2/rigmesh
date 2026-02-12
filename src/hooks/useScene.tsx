@@ -25,6 +25,7 @@ export interface SceneHooks {
     removeObject: (obj: THREE.Object3D) => void;
     getCamera: () => THREE.PerspectiveCamera | null;
     getCanvas: () => HTMLCanvasElement | null;
+    getScene: () => THREE.Scene | null;
     raycast: (clientX: number, clientY: number) => RaycastResult;
     attach: (obj: THREE.Object3D) => void;
     detach: () => void;
@@ -92,10 +93,11 @@ export function useScene(containerRef: RefObject<HTMLDivElement>): SceneHooks {
                 console.warn('[useScene] Helper not found for skinned mesh');
             }
         }
-        sceneRef.current.detach();
+        objectControlsRef.current.detach();
         sceneRef.current.remove(obj);
     }, []);
 
+    const getScene = useCallback(() => sceneRef.current, []);
     const getCamera = useCallback(() => cameraRef.current, []);
     const getCanvas = useCallback(() => rendererRef.current?.domElement ?? null, []);
 
@@ -305,6 +307,7 @@ export function useScene(containerRef: RefObject<HTMLDivElement>): SceneHooks {
         removeObject,
         getCamera,
         getCanvas,
+        getScene,
         raycast,
         attach,
         detach,

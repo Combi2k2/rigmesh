@@ -124,6 +124,7 @@ export default function SceneMenu({
         { label: 'Copy', action: 'copy', disabled: false },
         { label: 'Cut', action: 'cut', disabled: false },
         { label: 'Delete', action: 'delete', disabled: false },
+        { label: 'Edit Skeleton', action: 'editSkeleton', disabled: selectedMeshes.length !== 1 },
     ];
 
     if (!isOpen || !position) {

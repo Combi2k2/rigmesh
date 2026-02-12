@@ -102,16 +102,15 @@ export function smooth(lap: [number, number, number][],
         const idxJ = idxMap.get(j);
         if (fixI)   continue;
         if (fixJ)   b.set(b.get(idxI) - w * v, idxI);
-        else        T.addEntry(w, idxI, idxJ);
+        else        T.addEntry(w * smoothness, idxI, idxJ);
     }
     let weakRow = col;
     for (let [i, v] of value)   if (v !== null) {
         const fix = fixed.get(i);
         const idx = idxMap.get(i);
-        if (!fix) {
-            let coeff = Math.exp(-smoothness);
-            T.addEntry(coeff, weakRow, idx);
-            b.set(coeff * v, weakRow);
+        if (!fix) {;
+            T.addEntry(1, weakRow, idx);
+            b.set(v, weakRow);
             weakRow++;
         }
     }
@@ -161,8 +160,8 @@ export function diffuse(lap: [number, number, number][],
         const idxJ = idxMap.get(j);
 
         if (fixI)   continue;
-        if (fixJ)   b.set(b.get(idxI) - w * v, idxI);
-        else        T.addEntry(w, idxI, idxJ);
+        if (fixJ)   b.set(b.get(idxI) - smoothness * w * v, idxI);
+        else        T.addEntry(smoothness * w, idxI, idxJ);
     }
     for (let x of g.nodes()) {
         let [v, fix] = g.node(x);
@@ -170,10 +169,8 @@ export function diffuse(lap: [number, number, number][],
         if (v === null || fix)
             continue;
 
-        let coeff = Math.exp(-smoothness);
-
-        T.addEntry(coeff, idx, idx);
-        b.set(b.get(idx) + coeff * v, idx);
+        T.addEntry(1, idx, idx);
+        b.set(b.get(idx) + v, idx);
     }
     let A = SparseMatrix.fromTriplet(T);
 

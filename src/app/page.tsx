@@ -1,16 +1,15 @@
 'use client';
 
 import { useRef, useCallback, useEffect, useState } from 'react';
-import { useMeshGen } from '@/hooks/useMeshGen';
 import { SceneHooks } from '@/hooks/useScene';
-import MeshGenUI from '@/components/meshgenUI/MeshGenUI';
+import MeshGenUI from '@/components/MeshGenUI';
 import Scene from '@/components/main/Scene';
 import Canvas from '@/components/canvas';
 import MeshCutUI from '@/components/MeshCutUI';
 import MeshMergeUI from '@/components/MeshMergeUI';
-import { computeSkinWeightsGlobal } from '@/core/skin';
-import { skinnedMeshFromData } from '@/utils/threeMesh';
+import SkelOpsUI from '@/components/SkelOps';
 import { Point, Vec2, Vec3, MeshData, SkelData, MenuAction } from '@/interface';
+import { skinnedMeshFromData } from '@/utils/threeMesh';
 import * as THREE from 'three';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 
@@ -24,8 +23,8 @@ export interface SkinnedMeshData {
 
 export default function Page() {
     const sceneApiRef = useRef<SceneHooks | null>(null);
-    const processedMeshesRef = useRef<Set<string>>(new Set());
     const [showCanvas, setShowCanvas] = useState(false);
+    const [meshGenPath, setMeshGenPath] = useState<Vec2[] | null>(null);
     const [isSceneReady, setIsSceneReady] = useState(false);
     const [showRigUI, setShowRigUI] = useState(false);
     const [riggingMesh, setRiggingMesh] = useState<THREE.SkinnedMesh | null>(null);
@@ -33,43 +32,12 @@ export default function Page() {
     const [cuttingMesh, setCuttingMesh] = useState<THREE.SkinnedMesh | null>(null);
     const [showMergeUI, setShowMergeUI] = useState(false);
     const [mergingMeshes, setMergingMeshes] = useState<[THREE.SkinnedMesh, THREE.SkinnedMesh] | null>(null);
-    const meshGen = useMeshGen();
+    const [showSkelOpsUI, setShowSkelOpsUI] = useState(false);
+    const [skelOpsMesh, setSkelOpsMesh] = useState<THREE.SkinnedMesh | null>(null);
     const [exportedData, setExportedData] = useState<SkinnedMeshData | null>(null);
     const sceneContainerRef = useRef<HTMLDivElement>(null);
 
-    // When mesh gen completes (step > 5) and scene is ready, create skinned mesh and add to scene
-    useEffect(() => {
-        const { currentStep, mesh3D, skeleton } = meshGen.state;
-        if (currentStep <= 5 || !mesh3D || !skeleton || !sceneApiRef.current || !isSceneReady) return;
-
-        const meshKey = `${mesh3D[0].length}-${mesh3D[1].length}-${skeleton[0].length}`;
-        if (processedMeshesRef.current.has(meshKey)) return;
-        processedMeshesRef.current.add(meshKey);
-
-        const skinWeights = computeSkinWeightsGlobal(mesh3D, skeleton);
-
-        const data: SkinnedMeshData = {
-            mesh3D: {
-                vertices: mesh3D[0].map((v) => ({ x: v.x, y: v.y, z: v.z })),
-                faces: mesh3D[1],
-            },
-            skeleton: {
-                joints: skeleton[0].map((j) => ({ x: j.x, y: j.y, z: j.z })),
-                bones: skeleton[1],
-            },
-            skinWeights: skinWeights.map((w) => [...w]),
-            skinIndices: skinWeights.map((weights) =>
-                Array.from({ length: weights.length }, (_, i) => i)
-                    .sort((a, b) => weights[b] - weights[a])
-                    .slice(0, 4)
-            ),
-            version: '1.0',
-        };
-        setExportedData(data);
-
-        const skinnedMesh = skinnedMeshFromData({ mesh: mesh3D, skel: skeleton, skinWeights, skinIndices: null });
-        sceneApiRef.current.insertObject(skinnedMesh);
-    }, [meshGen.state.currentStep, meshGen.state.mesh3D, meshGen.state.skeleton, isSceneReady]);
+    const showMeshGenUI = meshGenPath !== null;
 
     const handleSceneReady = useCallback((api: SceneHooks) => {
         sceneApiRef.current = api;
@@ -125,18 +93,51 @@ export default function Page() {
                         console.warn('Merge requires 2 meshes, got', meshes.length);
                     }
                     break;
+                case 'editSkeleton':
+                    if (meshes.length > 0) {
+                        setSkelOpsMesh(meshes[0]);
+                        setShowSkelOpsUI(true);
+                    }
+                    break;
             }
         },
         []
     );
 
-    const handlePathComplete = useCallback(
-        (path: Point[]) => {
-            meshGen.onPathComplete(path as Vec2[]);
-            setShowCanvas(false);
-        },
-        [meshGen]
-    );
+    const handleSkelOpsComplete = useCallback((result: THREE.SkinnedMesh | THREE.SkinnedMesh[]) => {
+        const mesh = Array.isArray(result) ? result[0] : result;
+        if (mesh && skelOpsMesh) {
+            if (mesh.material instanceof THREE.MeshStandardMaterial) {
+                mesh.material.color.setHex(0xffffff);
+            }
+            sceneApiRef.current?.removeObject(skelOpsMesh);
+            sceneApiRef.current?.insertObject(mesh);
+        }
+        setShowSkelOpsUI(false);
+        setSkelOpsMesh(null);
+    }, [skelOpsMesh]);
+
+    const handleSkelOpsCancel = useCallback(() => {
+        setShowSkelOpsUI(false);
+        setSkelOpsMesh(null);
+    }, []);
+
+    const handlePathComplete = useCallback((path: Point[]) => {
+        setMeshGenPath(path as Vec2[]);
+        setShowCanvas(false);
+    }, []);
+
+    const handleMeshGenComplete = useCallback((mesh: THREE.SkinnedMesh) => {
+        if (mesh.material instanceof THREE.MeshStandardMaterial) {
+            mesh.material.color.setHex(0xffffff);
+        }
+        sceneApiRef.current?.insertObject(mesh);
+        setMeshGenPath(null);
+    }, []);
+
+    const handleMeshGenCancel = useCallback(() => {
+        setMeshGenPath(null);
+    }, []);
 
     const handleExport = useCallback(() => {
         if (!exportedData) {
@@ -202,26 +203,22 @@ export default function Page() {
         [isSceneReady]
     );
 
-    const isMeshGenMode = meshGen.state.currentStep <= 5;
-
-    // Trigger window resize event when scene becomes visible to force renderer resize
+    // Trigger window resize event when scene becomes visible after closing meshgen
     useEffect(() => {
-        if (!isMeshGenMode && sceneContainerRef.current) {
-            // Small delay to ensure DOM has updated
+        if (!showMeshGenUI && sceneContainerRef.current) {
             const timeoutId = setTimeout(() => {
                 window.dispatchEvent(new Event('resize'));
             }, 50);
             return () => clearTimeout(timeoutId);
         }
-    }, [isMeshGenMode]);
+    }, [showMeshGenUI]);
 
     return (
         <div className="relative h-screen w-full overflow-hidden">
-            {/* Always keep Scene mounted to preserve meshes, just hide it during meshgen */}
             <div
                 ref={sceneContainerRef}
                 className="h-full w-full"
-                style={{ display: isMeshGenMode ? 'none' : 'block' }}
+                style={{ display: showMeshGenUI ? 'none' : 'block' }}
             >
                 <Scene
                     onSceneReady={handleSceneReady}
@@ -229,14 +226,11 @@ export default function Page() {
                     className="h-full w-full"
                 />
             </div>
-            {isMeshGenMode && (
+            {showMeshGenUI && meshGenPath && (
                 <MeshGenUI
-                    state={meshGen.state}
-                    params={meshGen.params}
-                    onNext={meshGen.onNext}
-                    onBack={meshGen.onBack}
-                    onParamChange={meshGen.onParamChange}
-                    onCancel={meshGen.onReset}
+                    path={meshGenPath}
+                    onComplete={handleMeshGenComplete}
+                    onCancel={handleMeshGenCancel}
                 />
             )}
 
@@ -277,6 +271,14 @@ export default function Page() {
                 />
             )}
 
+            {showSkelOpsUI && skelOpsMesh && (
+                <SkelOpsUI
+                    skinnedMesh={skelOpsMesh}
+                    onComplete={handleSkelOpsComplete}
+                    onCancel={handleSkelOpsCancel}
+                />
+            )}
+
             {/* Control buttons */}
             <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
                 <button
@@ -300,7 +302,7 @@ export default function Page() {
                     </svg>
                 </button>
 
-                {!isMeshGenMode && (
+                {!showMeshGenUI && (
                     <>
                         <button
                             onClick={handleExport}
