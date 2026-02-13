@@ -134,9 +134,12 @@ export function useMeshGen(onComplete?: (mesh: THREE.SkinnedMesh) => void) {
     }, [boneDevThreshold, boneLenThreshold, bonePruningThreshold]);
     
     const handlePathComplete = useCallback((path: Vec2[]) => {
-        setLatestPath(path);
+        const minY = Math.min(...path.map((p) => p.y));
+        const maxY = Math.max(...path.map((p) => p.y));
+        const flipped = path.map((p) => new Vec2(p.x, minY + maxY - p.y));
+        setLatestPath(flipped);
         setCurrentStep(1);
-        processStep1(path);
+        processStep1(flipped);
     }, [processStep1]);
 
     const handleNext = useCallback(() => {
