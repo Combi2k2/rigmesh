@@ -3,12 +3,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { MeshGen } from '@/core/meshgen';
 import { Vec2, Vec3 } from '@/interface';
-import { MeshData } from '@/interface';
-import { SkelData } from '@/interface';
 import { computeSkinWeightsGlobal } from '@/core/skin';
 import { skinnedMeshFromData } from '@/utils/threeMesh';
 import * as geo3d from '@/utils/geo3d';
 import * as THREE from 'three';
+import * as metrics from '@/utils/metrics';
 
 export interface MeshGenState {
     currentStep: number;
@@ -64,10 +63,61 @@ export function useMeshGen(onComplete?: (mesh: THREE.SkinnedMesh) => void) {
   
     const meshGenRef = useRef<MeshGen | null>(null);
 
+    const findBoundary = (V: Vec2[], F: number[][]) => {
+        const n = V.length;
+        const adjList = new Array(n).fill(0).map(() => new Set<number>());
+
+        for (let [i0, i1, i2] of F) {
+            adjList[i0].add(i1);   adjList[i1].add(i0);
+            adjList[i0].add(i2);   adjList[i2].add(i0);
+            adjList[i1].add(i2);   adjList[i2].add(i1);
+        }
+        const boundary = [0];
+        
+        for (let i = 1; i < n; i++)
+            if (V[boundary[0]].x > V[i].x)
+                boundary[0] = i;
+        
+        let prev = new Vec2(
+            V[boundary[0]].x,
+            V[boundary[0]].y + 1
+        );
+        while (true) {
+            const currIdx = boundary[boundary.length - 1];
+            const curr = V[currIdx];
+
+            let minAngle = Infinity;
+            let minIdx = -1;
+
+            for (const i of adjList[currIdx]) {
+                const next = V[i];
+
+                const e0 = curr.minus(prev).unit();
+                const e1 = next.minus(curr).unit();
+                const sinTheta = e0.cross(e1);
+                const cosTheta = e0.dot(e1);
+                const angle = Math.atan2(sinTheta, cosTheta);
+
+                if (minAngle > angle) {
+                    minAngle = angle;
+                    minIdx = i;
+                }
+            }
+            if (minIdx === boundary[0])
+                break;
+            prev = curr;
+            boundary.push(minIdx);
+        }
+        return boundary.map(i => V[i]);
+    };
+
     const processStep1 = useCallback((path: Vec2[]) => {
         const meshGen = new MeshGen(path, isodistance);
         meshGenRef.current = meshGen;
         const mesh2DData = meshGen.getMesh2D() as [Vec2[], number[][]];
+
+        // console.log("[useMeshGen] Step 1: isodistance =", isodistance);
+        // console.log("[useMeshGen] IoU =", metrics.iou2DSilhouettes(mesh2DData[0], path));
         setMesh2D(mesh2DData);
         setIsometricLength(Math.max(5, isodistance));
     }, [isodistance]);
@@ -102,6 +152,12 @@ export function useMeshGen(onComplete?: (mesh: THREE.SkinnedMesh) => void) {
         const F = F_mock3.map(f => [...f]);
         if (!meshGenRef.current) return;
         meshGenRef.current.runMeshSmoothing(V, F, smoothFactor);
+
+        // const boundary = findBoundary(V.map(v => new Vec2(v.x, v.y)), F);
+        // console.log("[useMeshGen] Step 3: smoothFactor =", smoothFactor);
+        // console.log("[useMeshGen] Lap =", metrics.laplacian(V, F));
+        // console.log("[useMeshGen] IoU =", metrics.iou2DSilhouettes(boundary, latestPath));
+        setInit3(true);
         setMesh3D([V, F]);
         setInit4(false);
     }, [smoothFactor, V_mock3, F_mock3]);
@@ -119,6 +175,11 @@ export function useMeshGen(onComplete?: (mesh: THREE.SkinnedMesh) => void) {
 
         const length = isometricLength <= 5 ? -1 : isometricLength;
         geo3d.runIsometricRemesh(V, F, isometricIterations, length);
+
+        // const boundary = findBoundary(V.map(v => new Vec2(v.x, v.y)), F);
+        // console.log("[useMeshGen] Step 4: isometricIterations =", isometricIterations, "isometricLength =", isometricLength);
+        // console.log("[useMeshGen] Lap =", metrics.laplacian(V, F));
+        // console.log("[useMeshGen] IoU =", metrics.iou2DSilhouettes(boundary, latestPath));
         setMesh3D([V, F]);
     }, [isometricIterations, isometricLength, V_mock4, F_mock4]);
     
@@ -134,13 +195,13 @@ export function useMeshGen(onComplete?: (mesh: THREE.SkinnedMesh) => void) {
     }, [boneDevThreshold, boneLenThreshold, bonePruningThreshold]);
     
     const handlePathComplete = useCallback((path: Vec2[]) => {
-        const minY = Math.min(...path.map((p) => p.y));
-        const maxY = Math.max(...path.map((p) => p.y));
-        const flipped = path.map((p) => new Vec2(p.x, minY + maxY - p.y));
-        setLatestPath(flipped);
+        const centroid = path.reduce((acc, p) => acc.plus(p), new Vec2(0, 0)).over(path.length);
+        path = path.map(p => p.minus(centroid));
+        path = path.map(p => new Vec2(p.x, -p.y));
+
+        setLatestPath(path);
         setCurrentStep(1);
-        processStep1(flipped);
-    }, [processStep1]);
+    }, []);
 
     const handleNext = useCallback(() => {
         setCurrentStep(prev => prev + 1);
