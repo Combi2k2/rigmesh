@@ -256,8 +256,8 @@ export class MeshMerge {
                 console.error("Loops are not supposed to be oriented the same direction");
                 return;
             }
-            if (clockWise1) for (let i = 0; i < n2; i++)    loop2V2D[i].scaleBy(1.5);
-            else            for (let i = 0; i < n1; i++)    loop1V2D[i].scaleBy(1.5);
+            if (clockWise1) for (let i = 0; i < n2; i++)    loop2V2D[i].scaleBy(2);
+            else            for (let i = 0; i < n1; i++)    loop1V2D[i].scaleBy(2);
 
             const points = [];
             const edges = [];

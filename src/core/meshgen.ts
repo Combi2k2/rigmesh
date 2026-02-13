@@ -356,6 +356,8 @@ class MeshGen {
             const u = Q.pop();
             const d = toPrune.get(u);
             if (d < 0)  continue;
+            if (!g.hasNode(u))
+                continue;
             const neighbors = g.outEdges(u).map(e => e.w);
             if (neighbors.length === 1) {
                 const p = neighbors[0];
@@ -471,7 +473,7 @@ class MeshGen {
 
             let r = ri;
 
-            while (r > 1.2 * this.isodistance) {
+            while (r > 1.5 * this.isodistance) {
                 r -= this.isodistance;
                 let disc = this.generateCircle(co.plus(ci.minus(co).times((r/ri)**2)), d, r);
                 

@@ -119,8 +119,9 @@ export default function SkelOpsUI({
             } else {
                 const boneC = new THREE.Bone();
                 boneC.position.copy(posC);
+                apiRef.current.insertObject(boneC);
 
-                removeHelper(new SkeletonBone(boneA, boneB));
+                removeHelper(findBoneHelper(boneA, boneB));
                 helperRef.current.add(new SkeletonJoint(boneC));
                 helperRef.current.add(new SkeletonBone(boneA, boneC));
                 helperRef.current.add(new SkeletonBone(boneC, boneB));

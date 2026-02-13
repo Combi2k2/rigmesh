@@ -212,7 +212,7 @@ export default function MeshGenUI({ path, onComplete, onCancel }: MeshGenUIProps
                     {
                         name: 'smoothFactor',
                         value: flowApi.params.smoothFactor,
-                        min: 0,
+                        min: 0.1,
                         max: 20,
                         step: 0.05,
                         onChange: flowApi.onParamChange.setSmoothFactor,
