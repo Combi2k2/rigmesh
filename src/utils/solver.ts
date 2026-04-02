@@ -1,7 +1,8 @@
 import * as LinearAlgebra from '@/lib/linalg/linear-algebra.js';
 import { MeshData } from '@/interface';
 
-var Graph = require("graphlib").Graph;
+import graphlib from 'graphlib';
+const Graph = graphlib.Graph;
 const DenseMatrix = LinearAlgebra.DenseMatrix;
 const SparseMatrix = LinearAlgebra.SparseMatrix;
 const Triplet = LinearAlgebra.Triplet;
