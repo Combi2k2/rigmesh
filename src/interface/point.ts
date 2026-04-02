@@ -1,7 +1,8 @@
-const Vector = require('@/lib/linalg/vector');
+import Vector from '@/lib/linalg/vector.js';
 
-export { Vector as Vec3 };
-export type Vec3 = InstanceType<typeof Vector>;
+const Vec3 = Vector;
+type Vec3 = InstanceType<typeof Vector>;
+export { Vec3 };
 
 export class Vec2 {
 	/**
