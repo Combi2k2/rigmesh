@@ -1,7 +1,7 @@
 import Queue from './misc';
 
-var graphlib = require("graphlib");
-var cdt2d = require('cdt2d');
+import graphlib from 'graphlib';
+import cdt2d from 'cdt2d';
 
 const Graph = graphlib.Graph;
 type Graph = InstanceType<typeof Graph>;

@@ -1,5 +1,3 @@
-'use client';
-
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { SceneHooks } from '@/hooks/useScene';
 import MeshGenUI from '@/components/MeshGenUI';

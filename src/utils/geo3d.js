@@ -66,7 +66,8 @@ export function planeToFrame(plane) {
     return { origin, basisU, basisV };
 }
 
-var Graph = require("graphlib").Graph;
+import graphlib from 'graphlib';
+const Graph = graphlib.Graph;
 
 const EPS = 1e-8;
 

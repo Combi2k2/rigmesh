@@ -1,4 +1,4 @@
-var cdt2d = require('cdt2d');
+import cdt2d from 'cdt2d';
 import { findMats, CpNodeFs } from 'flo-mat';
 import Queue from './misc';
 

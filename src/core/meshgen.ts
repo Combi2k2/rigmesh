@@ -1,15 +1,15 @@
 import * as geo2d from '../utils/geo2d';
 import * as geo3d from '../utils/geo3d';
 import Queue from '../utils/misc';
-import Vector from '@/lib/linalg/vector';
+import Vector from '@/lib/linalg/vector.js';
 import { Point, Vec2, Vec3 } from '../interface/point';
 import { MeshData } from '../interface';
 import { SkelData } from '../interface';
 import { buildLaplacianTopology, smooth } from '@/utils/solver';
 
-// @ts-ignore - CommonJS module
-var Graph = require("graphlib").Graph;
-var cdt2d = require('cdt2d');
+import graphlib from 'graphlib';
+import cdt2d from 'cdt2d';
+const Graph = graphlib.Graph;
 
 function reparameterize(points: Point[], isodistance: number) {
     let length = 0;

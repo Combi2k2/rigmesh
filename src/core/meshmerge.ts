@@ -26,8 +26,9 @@ import * as topo from '@/utils/topo';
 import { buildLaplacianTopology, smooth } from '@/utils/solver';
 import { buildLaplacianGeometry, diffuse } from '@/utils/solver';
 
-var Graph = require("graphlib").Graph;
-var cdt2d = require('cdt2d');
+import graphlib from 'graphlib';
+import cdt2d from 'cdt2d';
+const Graph = graphlib.Graph;
 
 // --- Helper Functions (kept module-scope for simplicity) ---
 

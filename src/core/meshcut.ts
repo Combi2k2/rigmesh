@@ -17,8 +17,8 @@ import * as geo3d from '@/utils/geo3d';
 import * as THREE from 'three';
 import * as topo from '@/utils/topo';
 
-var graphlib = require("graphlib");
-var cdt2d = require('cdt2d');
+import graphlib from 'graphlib';
+import cdt2d from 'cdt2d';
 
 /** Screen-space line: two NDC points (Vec2 or [x,y] tuple) */
 export type ScreenLine = [[number, number], [number, number]];
