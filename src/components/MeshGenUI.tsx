@@ -7,8 +7,8 @@ import { SceneHooks } from '@/hooks/useScene';
 import { Vec2, Vec3 } from '@/interface';
 import { createSkeleton } from '@/utils/threeSkel';
 
-import Scene from '@/components/template/Scene';
-import Controller from '@/components/template/Controller';
+import Scene from '@/components/base/Scene';
+import Controller from '@/components/base/Controller';
 
 const COLORS = {
     POLYGON: 0xffffff,

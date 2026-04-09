@@ -5,11 +5,11 @@ import * as THREE from 'three';
 import { useMeshCut } from '@/hooks/useMeshCut';
 import { SceneHooks } from '@/hooks/useScene';
 
-import Scene from '@/components/template/Scene';
-import Controller from '@/components/template/Controller';
+import Scene from '@/components/base/Scene';
+import Controller from '@/components/base/Controller';
 import { computeCutPlaneFromScreenLine } from '@/core/meshcut';
 import { ScreenLine } from '@/core/meshcut';
-import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { cloneSkinnedMesh } from '@/utils/threeMesh';
 
 export interface MeshCutUIProps {
     skinnedMesh: THREE.SkinnedMesh;
@@ -39,7 +39,7 @@ export default function MeshCutUI({
         sceneRef.current = api;
         setReady(true);
 
-        cloneRef.current = SkeletonUtils.clone(skinnedMesh) as THREE.SkinnedMesh;
+        cloneRef.current = cloneSkinnedMesh(skinnedMesh);
         sceneRef.current.insertObject(cloneRef.current);
         flowApi.onMeshReady(cloneRef.current);
 
@@ -126,6 +126,16 @@ export default function MeshCutUI({
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [ready, flowApi.state.currentStep, point1, point2]);
+
+    // Cleanup clone on unmount (e.g. cancel)
+    useEffect(() => {
+        return () => {
+            if (cloneRef.current && sceneRef.current) {
+                sceneRef.current.removeObject(cloneRef.current);
+                cloneRef.current = null;
+            }
+        };
+    }, []);
 
     const steps = useMemo(() => [
         { name: 'Draw Cut Line', desc: 'Press C to start/stop drawing, Enter to confirm, Escape to cancel', params: [] },

@@ -7,9 +7,9 @@ import { SceneHooks } from '@/hooks/useScene';
 import { SkeletonConnector } from '@/utils/threeSkel';
 import { traceMesh } from '@/utils/threeSkel';
 
-import Scene from '@/components/template/Scene';
-import Controller from '@/components/template/Controller';
-import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import Scene from '@/components/base/Scene';
+import Controller from '@/components/base/Controller';
+import { cloneSkinnedMesh } from '@/utils/threeMesh';
 
 export interface MeshMergeUIProps {
     mesh1: THREE.SkinnedMesh;
@@ -35,8 +35,8 @@ export default function MeshMergeUI({
         sceneRef.current = api;
         setReady(true);
 
-        clone1Ref.current = SkeletonUtils.clone(mesh1) as THREE.SkinnedMesh;
-        clone2Ref.current = SkeletonUtils.clone(mesh2) as THREE.SkinnedMesh;
+        clone1Ref.current = cloneSkinnedMesh(mesh1) as THREE.SkinnedMesh;
+        clone2Ref.current = cloneSkinnedMesh(mesh2) as THREE.SkinnedMesh;
         connectorRef.current = new SkeletonConnector(clone1Ref.current, clone2Ref.current);
         connectorRef.current.updateMatrixWorld();
 
@@ -108,25 +108,39 @@ export default function MeshMergeUI({
     }, [ready, flowApi.state.currentStep]);
 
     useEffect(() => {
-        if (!ready) return;
-        if (flowApi.state.currentStep === 2) {
-            sceneRef.current.detach();
-            sceneRef.current.removeObject(clone1Ref.current);
-            sceneRef.current.removeObject(clone2Ref.current);
-            sceneRef.current.removeObject(connectorRef.current);
-            sceneRef.current.insertObject(flowApi.state.resultRef.current);
+        if (!ready || flowApi.state.currentStep !== 2) return;
 
-            clone1Ref.current.geometry.dispose();
-            clone1Ref.current.material.dispose();
-            clone2Ref.current.geometry.dispose();
-            clone2Ref.current.material.dispose();
-            connectorRef.current.dispose();
+        sceneRef.current.detach();
+        sceneRef.current.removeObject(clone1Ref.current);
+        sceneRef.current.removeObject(clone2Ref.current);
+        // Connector is a Group, dispose its helpers manually
+        connectorRef.current?.dispose();
+        sceneRef.current.remove(connectorRef.current);
+        sceneRef.current.insertObject(flowApi.state.resultRef.current);
 
-            clone1Ref.current = null;
-            clone2Ref.current = null;
-            connectorRef.current = null;
-        }
+        clone1Ref.current = null;
+        clone2Ref.current = null;
+        connectorRef.current = null;
     }, [ready, flowApi.state.currentStep]);
+
+    // Cleanup on unmount if cancelled before step 2
+    useEffect(() => {
+        return () => {
+            if (clone1Ref.current && sceneRef.current) {
+                sceneRef.current.removeObject(clone1Ref.current);
+                clone1Ref.current = null;
+            }
+            if (clone2Ref.current && sceneRef.current) {
+                sceneRef.current.removeObject(clone2Ref.current);
+                clone2Ref.current = null;
+            }
+            if (connectorRef.current) {
+                connectorRef.current.dispose();
+                sceneRef.current?.remove(connectorRef.current);
+                connectorRef.current = null;
+            }
+        };
+    }, []);
 
     const steps = useMemo(() => [
         { name: 'Position & Connect', desc: 'Drag meshes into place. Click mesh to update connector; Space cycles snap/split/connect.', params: [] },

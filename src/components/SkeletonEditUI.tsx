@@ -7,7 +7,7 @@ import { SceneHooks } from '@/hooks/useScene';
 import { SkeletonBone } from '@/utils/threeSkel';
 import { SkeletonJoint } from '@/utils/threeSkel';
 import { useScene } from '@/hooks/useScene';
-import Controller from '@/components/template/Controller';
+import Controller from '@/components/base/Controller';
 
 import { computeSkinWeightsGlobal } from '@/core/skin';
 import { skinnedMeshFromData } from '@/utils/threeMesh';
@@ -80,6 +80,20 @@ export default function SkelOpsUI({
         });
         apiRef.current?.insertObject(helperRef.current);
         apiRef.current?.insertObject(meshRef.current);
+
+        return () => {
+            // Dispose helper joints/bones
+            if (helperRef.current) {
+                helperRef.current.children.forEach(child => (child as any).dispose?.());
+                apiRef.current?.removeObject(helperRef.current);
+                helperRef.current = null;
+            }
+            // Dispose the plain mesh
+            if (meshRef.current) {
+                apiRef.current?.removeObject(meshRef.current);
+                meshRef.current = null;
+            }
+        };
     }, [skinnedMesh]);
 
     useEffect(() => {
