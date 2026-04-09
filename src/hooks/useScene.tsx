@@ -64,6 +64,7 @@ export function useScene(containerRef: RefObject<HTMLDivElement>): SceneHooks {
     const frameIdRef = useRef<number | null>(null);
     const mesh2HelperRef = useRef<Map<number, THREE.Group>>(new Map());
     const meshCounterRef = useRef(0);
+    const raycasterRef = useRef(new THREE.Raycaster());
 
     const insertObject = useCallback((obj: THREE.Object3D) => {
         if (!sceneRef.current) return;
@@ -82,18 +83,34 @@ export function useScene(containerRef: RefObject<HTMLDivElement>): SceneHooks {
 
     const removeObject = useCallback((obj: THREE.Object3D) => {
         if (!sceneRef.current || !obj) return;
+        objectControlsRef.current?.detach();
+
         if (obj instanceof THREE.SkinnedMesh) {
+            // Remove skeleton helper
             const id = obj.userData.id;
             const helper = mesh2HelperRef.current.get(id);
             if (helper) {
-                helper.children.forEach(child => child.dispose());
+                helper.children.forEach(child => (child as any).dispose?.());
                 sceneRef.current.remove(helper);
                 mesh2HelperRef.current.delete(id);
-            } else {
-                console.warn('[useScene] Helper not found for skinned mesh');
             }
+            // Dispose GPU resources
+            obj.geometry?.dispose();
+            const mat = obj.material;
+            if (Array.isArray(mat)) mat.forEach(m => m.dispose());
+            else mat?.dispose();
+            obj.skeleton?.dispose();
+            // Clean userData to release references
+            delete obj.userData.id;
+            delete obj.userData.bones;
+            delete obj.userData.boneSkinWeights;
+            delete obj.userData.boneSkinIndices;
+        } else if (obj instanceof THREE.Mesh) {
+            obj.geometry?.dispose();
+            const mat = obj.material;
+            if (Array.isArray(mat)) mat.forEach(m => m.dispose());
+            else mat?.dispose();
         }
-        objectControlsRef.current.detach();
         sceneRef.current.remove(obj);
     }, []);
 
@@ -113,8 +130,7 @@ export function useScene(containerRef: RefObject<HTMLDivElement>): SceneHooks {
             ((clientX - rect.left) / rect.width) * 2 - 1,
             -((clientY - rect.top) / rect.height) * 2 + 1
         );
-        const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(ndc, camera);
+        raycasterRef.current.setFromCamera(ndc, camera);
         const helpers: THREE.Mesh[] = [];
         const meshes: THREE.SkinnedMesh[] = [];
 
@@ -125,13 +141,13 @@ export function useScene(containerRef: RefObject<HTMLDivElement>): SceneHooks {
                 helpers.push(...child.children);
             }
         });
-        let intersects = raycaster.intersectObjects(helpers, false)
+        let intersects = raycasterRef.current.intersectObjects(helpers, false)
         if (intersects.length > 0) {
             let obj = intersects[0].object;
             if (obj?.isHelperJoint) return obj.joint as THREE.Bone;
             if (obj?.isHelperBone)  return [obj.jointA as THREE.Bone, obj.jointB as THREE.Bone];
         }
-        intersects = raycaster.intersectObjects(meshes, false);
+        intersects = raycasterRef.current.intersectObjects(meshes, false);
         if (intersects.length > 0)
             return intersects[0].object as THREE.SkinnedMesh;
         
