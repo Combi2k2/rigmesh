@@ -1,14 +1,339 @@
-import { StrictMode } from 'react';
+import { StrictMode, useRef, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import '@mantine/core/styles.css';
 import './index.css';
-import Page from './app/page';
+
+import { SceneProvider } from './context/SceneContext';
+import { SceneHooks } from '@/hooks/useScene';
+import { Vec2 } from '@/interface';
+import { Point } from '@/interface/point';
+import { cloneSkinnedMesh } from '@/utils/threeMesh';
+import { traceMesh } from '@/utils/threeSkel';
+import * as THREE from 'three';
+
+import Scene from '@/components/base/Scene';
+import Sidebar from '@/components/base/Sidebar';
+import ToolOpsBar from '@/components/ToolOpsBar';
+import ToolNetBar from '@/components/ToolNetBar';
+import Canvas from '@/components/Canvas';
+import MeshGenUI from '@/components/MeshGenUI';
+import MeshCutUI from '@/components/MeshCutUI';
+import MeshMergeUI from '@/components/MeshMergeUI';
+import SkelOpsUI from '@/components/SkeletonEditUI';
+
+// --- Colors ---
+
+const SELECTED_COLOR = 0x9b59b6;
+const DEFAULT_COLOR = 0xffffff;
+
+function setMeshColor(mesh: THREE.SkinnedMesh, color: number) {
+    const mat = mesh.material;
+    if (mat instanceof THREE.MeshStandardMaterial) {
+        mat.vertexColors = false;
+        mat.needsUpdate = true;
+        mat.color.setHex(color);
+    }
+}
+
+// --- App ---
+
+function App() {
+    const sceneApiRef = useRef<SceneHooks | null>(null);
+    const [threeScene, setThreeScene] = useState<THREE.Scene | null>(null);
+    const [selectedMeshes, setSelectedMeshes] = useState<THREE.SkinnedMesh[]>([]);
+
+    // Flow states
+    const [showCanvas, setShowCanvas] = useState(false);
+    const [meshGenPath, setMeshGenPath] = useState<Vec2[] | null>(null);
+    const [showCutUI, setShowCutUI] = useState(false);
+    const [cuttingMesh, setCuttingMesh] = useState<THREE.SkinnedMesh | null>(null);
+    const [showMergeUI, setShowMergeUI] = useState(false);
+    const [mergingMeshes, setMergingMeshes] = useState<[THREE.SkinnedMesh, THREE.SkinnedMesh] | null>(null);
+    const [showSkelOpsUI, setShowSkelOpsUI] = useState(false);
+    const [skelOpsMesh, setSkelOpsMesh] = useState<THREE.SkinnedMesh | null>(null);
+
+    const sceneContainerRef = useRef<HTMLDivElement>(null);
+    const showMeshGenUI = meshGenPath !== null;
+
+    // --- Scene ready ---
+
+    const handleSceneReady = useCallback((api: SceneHooks) => {
+        sceneApiRef.current = api;
+        setThreeScene(api.getScene());
+    }, []);
+
+    // --- Selection ---
+
+    const handleLeftClick = useCallback((mesh: THREE.SkinnedMesh | null, directMeshClick: boolean) => {
+        if (!mesh) {
+            setSelectedMeshes(prev => {
+                prev.forEach(m => setMeshColor(m, DEFAULT_COLOR));
+                return [];
+            });
+            return;
+        }
+
+        setSelectedMeshes(prev => {
+            if (prev.includes(mesh)) {
+                if (directMeshClick) {
+                    setMeshColor(mesh, DEFAULT_COLOR);
+                    return prev.filter(m => m !== mesh);
+                }
+                return prev;
+            } else {
+                if (directMeshClick) {
+                    setMeshColor(mesh, SELECTED_COLOR);
+                }
+                return [...prev, mesh];
+            }
+        });
+    }, []);
+
+    // Scene graph click: select object same as 3D interaction
+    const handleSceneGraphSelect = useCallback((object: THREE.Object3D) => {
+        const api = sceneApiRef.current;
+        if (!api) return;
+
+        if (object instanceof THREE.SkinnedMesh) {
+            handleLeftClick(object, true);
+            api.setSpace('world');
+            api.attach(object);
+        } else if (object instanceof THREE.Bone) {
+            const mesh = traceMesh(object);
+            if (mesh) {
+                handleLeftClick(mesh, false);
+                api.setSpace('local');
+                api.attach(object);
+
+                // Visualize bone weights
+                const nV = mesh.geometry.getAttribute('position').count;
+                const weight = new Array(nV).fill(0);
+                const colors = new Float32Array(nV * 3);
+                const index = mesh.skeleton.bones.indexOf(object);
+                const skinIndicesAttr = mesh.geometry.getAttribute('skinIndex') as THREE.BufferAttribute;
+                const skinWeightsAttr = mesh.geometry.getAttribute('skinWeight') as THREE.BufferAttribute;
+
+                for (let i = 0; i < nV; i++)
+                    for (let j = 0; j < 4; j++)
+                        if (index === skinIndicesAttr.getComponent(i, j)) {
+                            weight[i] = skinWeightsAttr.getComponent(i, j);
+                            break;
+                        }
+
+                for (let i = 0; i < nV; i++) {
+                    colors[i * 3 + 0] = weight[i];
+                    colors[i * 3 + 1] = 0;
+                    colors[i * 3 + 2] = 1 - weight[i];
+                }
+                mesh.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+                const mat = mesh.material as THREE.MeshStandardMaterial;
+                mat.vertexColors = true;
+                mat.needsUpdate = true;
+            }
+        }
+    }, [handleLeftClick]);
+
+    // --- Operations ---
+
+    const clearSelection = useCallback((meshes: THREE.SkinnedMesh[]) => {
+        const removed = new Set(meshes);
+        setSelectedMeshes(prev => {
+            prev.forEach(m => { if (removed.has(m)) setMeshColor(m, DEFAULT_COLOR); });
+            return prev.filter(m => !removed.has(m));
+        });
+    }, []);
+
+    const handleDraw = useCallback(() => setShowCanvas(true), []);
+
+    const handleCut = useCallback((mesh: THREE.SkinnedMesh) => {
+        clearSelection([mesh]);
+        setCuttingMesh(mesh);
+        setShowCutUI(true);
+    }, [clearSelection]);
+
+    const handleMerge = useCallback((meshes: THREE.SkinnedMesh[]) => {
+        if (meshes.length >= 2) {
+            clearSelection(meshes);
+            setMergingMeshes([meshes[0], meshes[1]]);
+            setShowMergeUI(true);
+        }
+    }, [clearSelection]);
+
+    const handleDuplicate = useCallback((mesh: THREE.SkinnedMesh) => {
+        const cloned = cloneSkinnedMesh(mesh);
+        sceneApiRef.current?.insertObject(cloned);
+    }, []);
+
+    const handleDelete = useCallback((meshes: THREE.SkinnedMesh[]) => {
+        clearSelection(meshes);
+        meshes.forEach(mesh => sceneApiRef.current?.removeObject(mesh));
+    }, [clearSelection]);
+
+    const handleEditSkeleton = useCallback((mesh: THREE.SkinnedMesh) => {
+        clearSelection([mesh]);
+        setSkelOpsMesh(mesh);
+        setShowSkelOpsUI(true);
+    }, [clearSelection]);
+
+    // --- Export / Import (placeholder) ---
+
+    const handleExport = useCallback(() => {
+        // TODO: implement export
+        console.log('Export not yet implemented');
+    }, []);
+
+    const handleImport = useCallback(() => {
+        // TODO: implement import
+        console.log('Import not yet implemented');
+    }, []);
+
+    // --- Flow completions ---
+
+    const handlePathComplete = useCallback((path: Point[]) => {
+        setMeshGenPath(path as Vec2[]);
+        setShowCanvas(false);
+    }, []);
+
+    const handleMeshGenComplete = useCallback((mesh: THREE.SkinnedMesh) => {
+        if (mesh.material instanceof THREE.MeshStandardMaterial) {
+            mesh.material.color.setHex(0xffffff);
+        }
+        sceneApiRef.current?.insertObject(mesh);
+        setMeshGenPath(null);
+    }, []);
+
+    const handleMeshCutComplete = useCallback((meshes: THREE.SkinnedMesh[]) => {
+        meshes.forEach(mesh => {
+            if (mesh.material instanceof THREE.MeshStandardMaterial) {
+                mesh.material.color.setHex(0xffffff);
+            }
+            sceneApiRef.current?.insertObject(mesh);
+        });
+        if (cuttingMesh) sceneApiRef.current?.removeObject(cuttingMesh);
+        setShowCutUI(false);
+        setCuttingMesh(null);
+    }, [cuttingMesh]);
+
+    const handleSkelOpsComplete = useCallback((result: THREE.SkinnedMesh | THREE.SkinnedMesh[]) => {
+        const mesh = Array.isArray(result) ? result[0] : result;
+        if (mesh && skelOpsMesh) {
+            if (mesh.material instanceof THREE.MeshStandardMaterial) {
+                mesh.material.color.setHex(0xffffff);
+            }
+            sceneApiRef.current?.removeObject(skelOpsMesh);
+            sceneApiRef.current?.insertObject(mesh);
+        }
+        setShowSkelOpsUI(false);
+        setSkelOpsMesh(null);
+    }, [skelOpsMesh]);
+
+    // Trigger resize when returning from meshgen
+    useEffect(() => {
+        if (!showMeshGenUI && sceneContainerRef.current) {
+            const id = setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+            return () => clearTimeout(id);
+        }
+    }, [showMeshGenUI]);
+
+    return (
+        <div className="relative h-screen w-full overflow-hidden">
+            {/* Main layout: viewport + sidebar */}
+            <div
+                ref={sceneContainerRef}
+                className="h-full w-full flex"
+                style={{ display: showMeshGenUI ? 'none' : 'flex' }}
+            >
+                {/* 3D viewport */}
+                <div className="flex-1 min-w-0 min-h-0 relative">
+                    <Scene
+                        enableRig
+                        enableTransform
+                        onSceneReady={handleSceneReady}
+                        onLeftClick={handleLeftClick}
+                    />
+                    <div className="absolute bottom-4 right-4 z-40 flex flex-col items-center gap-2">
+                        <ToolOpsBar
+                            selectedMeshes={selectedMeshes}
+                            onDraw={handleDraw}
+                            onCut={handleCut}
+                            onMerge={handleMerge}
+                            onDuplicate={handleDuplicate}
+                            onDelete={handleDelete}
+                            onEditSkeleton={handleEditSkeleton}
+                        />
+                        <ToolNetBar
+                            onExport={handleExport}
+                            onImport={handleImport}
+                        />
+                    </div>
+                </div>
+                {/* Right sidebar */}
+                <div className="w-56 flex-shrink-0 border-l border-gray-700 overflow-hidden">
+                    <Sidebar scene={threeScene} onSelect={handleSceneGraphSelect} />
+                </div>
+            </div>
+
+            {/* Overlay UIs */}
+            {showMeshGenUI && meshGenPath && (
+                <MeshGenUI
+                    path={meshGenPath}
+                    onComplete={handleMeshGenComplete}
+                    onCancel={() => setMeshGenPath(null)}
+                />
+            )}
+
+            {showCanvas && (
+                <div className="absolute inset-0 z-50 bg-white dark:bg-gray-900">
+                    <Canvas onPathComplete={handlePathComplete} />
+                </div>
+            )}
+
+            {showCutUI && cuttingMesh && (
+                <MeshCutUI
+                    skinnedMesh={cuttingMesh}
+                    onComplete={handleMeshCutComplete}
+                    onCancel={() => { setShowCutUI(false); setCuttingMesh(null); }}
+                />
+            )}
+
+            {showMergeUI && mergingMeshes && (
+                <MeshMergeUI
+                    mesh1={mergingMeshes[0]}
+                    mesh2={mergingMeshes[1]}
+                    onComplete={(mergedMesh) => {
+                        if (mergedMesh.material instanceof THREE.MeshStandardMaterial) {
+                            mergedMesh.material.color.setHex(0xffffff);
+                        }
+                        sceneApiRef.current?.insertObject(mergedMesh);
+                        sceneApiRef.current?.removeObject(mergingMeshes[0]);
+                        sceneApiRef.current?.removeObject(mergingMeshes[1]);
+                        setShowMergeUI(false);
+                        setMergingMeshes(null);
+                    }}
+                    onCancel={() => { setShowMergeUI(false); setMergingMeshes(null); }}
+                />
+            )}
+
+            {showSkelOpsUI && skelOpsMesh && (
+                <SkelOpsUI
+                    skinnedMesh={skelOpsMesh}
+                    onComplete={handleSkelOpsComplete}
+                    onCancel={() => { setShowSkelOpsUI(false); setSkelOpsMesh(null); }}
+                />
+            )}
+        </div>
+    );
+}
+
+// --- Mount ---
 
 createRoot(document.getElementById('root')!).render(
     <StrictMode>
-    <MantineProvider defaultColorScheme="light">
-        <Page />
-    </MantineProvider>
+        <MantineProvider defaultColorScheme="light">
+            <SceneProvider>
+                <App />
+            </SceneProvider>
+        </MantineProvider>
     </StrictMode>
 );
