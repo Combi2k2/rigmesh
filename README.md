@@ -18,3 +18,24 @@ npx vite
 - [ ] Fix other React-related bugs (state handling, stack overflow, ...)
 - [X] Add Scene Graph to the viewport
 - [X] Deployment
+- [ ] Import/Export functionality
+- [ ] Scene Manipulation Toolbar:
+    - [ ] A horizontal bottom toolbar to select mesh transformation tool:
+        - A simple selection tool (no transform control helper is displayed, default tool)
+        - Translation tool (with 'G' bindkey): 'move' icon in lucide
+        - Rotation tool (with 'R' bindkey): 'refresh-ccw' icon
+        - Scale tool (with 'S' bindkey): 'expand' icon
+    - [ ] A lock button: Avoid camera control while trying to manipulate small object in the scene
+- [ ] Scene Graph manipulation:
+    - [ ] Allow changing name of object in the scene by interacting with entry of scene graph
+    - [ ] Allow setting a joint to be root of bone hierarchy
+    - [ ] Highlight entry in the scene graph when object is selected from scene
+- [ ] Inverse kinematic rigging mechanism
+- [ ] Overlay container for operational scene
+- [ ] Change default angle of new scene
+- [ ] Viewmode toggle:
+    - [ ] Wireframe
+    - [ ] Normal
+    - [ ] Skeleton
+    - [ ] Operation step-by-step execution
+    
