@@ -450,5 +450,11 @@ export class MeshCut {
             }
         }
         setSkinWeights(mesh, skinWeights, skinIndices);
+        // Clean up temporary userData from intermediate steps
+        delete mesh.userData.topoG;
+        delete mesh.userData.loops;
+        delete mesh.userData.stitched;
+        delete mesh.userData.patched;
+        delete mesh.userData.patchBase;
     }
 }

@@ -5,7 +5,7 @@
  * 1. Detect triangles from mesh A inside mesh B and vice versa
  * 2. Remove those triangles
  * 3. Extract boundary loops from each mesh
- * 4. Connect boundary loops using generateSlice logic
+ * 4. Connect boundary loops using stitchRings
  * 5. Smooth the merged region
  */
 
@@ -19,15 +19,13 @@ import { extractSkelData } from '@/utils/threeMesh';
 import { setSkinWeights } from '@/utils/threeMesh';
 import * as THREE from 'three';
 import * as geo3d from '@/utils/geo3d';
-import * as geo2d from '@/utils/geo2d';
 import * as skin from '@/core/skin';
 import * as topo from '@/utils/topo';
 
 import { buildLaplacianTopology, smooth } from '@/utils/solver';
-import { buildLaplacianGeometry, diffuse } from '@/utils/solver';
+import { stitchRings } from '@/utils/stitch';
 
 import graphlib from 'graphlib';
-import cdt2d from 'cdt2d';
 const Graph = graphlib.Graph;
 
 // --- Helper Functions (kept module-scope for simplicity) ---
@@ -233,50 +231,11 @@ export class MeshMerge {
             const loop1V = loops1[i].map(idx => posArray[idx]);
             const loop2V = loops2[j].map(idx => posArray[idx]);
             const n1 = loop1V.length;
-            const n2 = loop2V.length;
 
-            const centroid = new Vec3(0, 0, 0);
-            centroid.incrementBy(centroids1[i].times(n1));
-            centroid.incrementBy(centroids2[j].times(n2));
-            centroid.divideBy(n1 + n2);
-
-            const normal = geo3d.runNormalEstimation([...loop1V, ...loop2V]);
-            const bases = geo3d.computePlaneBasis(normal);
-            const frame = { origin: centroid, basisU: bases[0], basisV: bases[1] };
-            const plane = { normal, offset: centroid.dot(normal) };
-
-            const loop1V2D = loop1V.map(v => geo3d.projectTo2D(v, plane, frame));
-            const loop2V2D = loop2V.map(v => geo3d.projectTo2D(v, plane, frame));
-
-            const clockWise1 = geo2d.isClockwise(loop1V2D);
-            const clockWise2 = geo2d.isClockwise(loop2V2D);
-
-            console.log(...loop1V2D, ...loop2V2D);
-
-            if (clockWise1 === clockWise2) {
-                console.error("Loops are not supposed to be oriented the same direction");
-                return;
-            }
-            if (clockWise1) for (let i = 0; i < n2; i++)    loop2V2D[i].scaleBy(2);
-            else            for (let i = 0; i < n1; i++)    loop1V2D[i].scaleBy(2);
-
-            const points = [];
-            const edges = [];
-            loop1V2D.forEach(p => points.push([p.x, p.y]));
-            loop2V2D.forEach(p => points.push([p.x, p.y]));
-            loop1V2D.forEach((_, i) => edges.push([i, (i + 1) % n1]));
-            loop2V2D.forEach((_, i) => edges.push([i + n1, (i + 1) % n2 + n1]));
-
-            const faces_patch = cdt2d(points, edges, {exterior: false});
-            const faces_final = [];
-            faces_patch.forEach(f => {
-                const face: number[] = [];
-                for (const v of f) {
-                    if (v < n1) face.push(loops1[i][v]);
-                    else        face.push(loops2[j][v - n1]);
-                }
-                faces_final.push(face);
-            });
+            const faces_patch = stitchRings(loop1V, loop2V);
+            const faces_final = faces_patch.map(f =>
+                f.map(v => v < n1 ? loops1[i][v] : loops2[j][v - n1])
+            );
 
             const patch = buildMesh([[...loop1V, ...loop2V], faces_patch], false);
             patch.userData.faces = faces_final;
@@ -373,5 +332,11 @@ export class MeshMerge {
             extractSkelData(mesh)
         );
         setSkinWeights(mesh, skinWeights, null);
+        // Clean up temporary userData from intermediate steps
+        delete mesh.userData.loops1;
+        delete mesh.userData.loops2;
+        delete mesh.userData.topoG;
+        delete mesh.userData.source;
+        delete mesh.userData.patched;
     }
 }
