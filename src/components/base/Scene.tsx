@@ -3,7 +3,6 @@
 import { useRef, useEffect } from 'react';
 import { useScene, SceneHooks } from '@/hooks/useScene';
 import { traceMesh } from '@/utils/threeSkel';
-import { deepCopy } from '@/utils/misc';
 import * as THREE from 'three';
 
 export interface SceneProps {
@@ -11,6 +10,7 @@ export interface SceneProps {
     enableTransform?: boolean;
     onMeshSelect?: (mesh: THREE.SkinnedMesh) => void;
     onSceneReady?: (api: SceneHooks) => void;
+    onLeftClick?: (mesh: THREE.SkinnedMesh | null, directMeshClick: boolean) => void;
 }
 
 /**
@@ -24,6 +24,7 @@ export default function Scene({
     enableTransform = true,
     onMeshSelect,
     onSceneReady,
+    onLeftClick,
 }: SceneProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const sceneApi = useScene(containerRef);
@@ -48,13 +49,40 @@ export default function Scene({
             if (key === 's')    apiRef.current.setMode('scale');
         };
 
-        const handleLeftClick = (event: MouseEvent) => {
+        const DRAG_THRESHOLD = 4; // pixels
+        let mousePressed = false;
+        let mouseDragged = false;
+        let downX = 0, downY = 0;
+
+        const handleMouseDown = (event: MouseEvent) => {
+            if (event.button === 0) {
+                mousePressed = true;
+                mouseDragged = false;
+                downX = event.clientX;
+                downY = event.clientY;
+            }
+        };
+
+        const handleMouseMove = (event: MouseEvent) => {
+            if (!mousePressed || mouseDragged) return;
+            const dx = event.clientX - downX;
+            const dy = event.clientY - downY;
+            if (dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD)
+                mouseDragged = true;
+        };
+
+        const handleMouseUp = (event: MouseEvent) => {
             if (event.button !== 0) return;
+            const wasDragged = mouseDragged;
+            mousePressed = false;
+            mouseDragged = false;
+            if (wasDragged) return;
 
             const result = apiRef.current.raycast(event.clientX, event.clientY);
             const mesh = traceMesh(result);
             if (!mesh) {
                 apiRef.current.detach();
+                onLeftClick?.(null, false);
                 return;
             }
 
@@ -69,6 +97,7 @@ export default function Scene({
                 const mat = mesh.material as THREE.MeshStandardMaterial;
                 mat.vertexColors = false;
                 mat.needsUpdate = true;
+                onLeftClick?.(mesh, true);
                 return;
             }
             const nV = mesh.geometry.getAttribute('position').count;
@@ -113,6 +142,8 @@ export default function Scene({
             const mat = mesh.material as THREE.MeshStandardMaterial;
             mat.vertexColors = true;
             mat.needsUpdate = true;
+
+            onLeftClick?.(mesh, false);
         };
         const handleRightClick = (event: MouseEvent) => {
             if (event.button !== 2) return;
@@ -126,15 +157,19 @@ export default function Scene({
             onMeshSelect(mesh);
         };
 
-        canvas.addEventListener('mousedown', handleLeftClick);
+        canvas.addEventListener('mousedown', handleMouseDown);
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('mouseup', handleMouseUp);
         canvas.addEventListener('contextmenu', handleRightClick);
         window.addEventListener('keydown', handleKeyDown);
         return () => {
-            canvas.removeEventListener('mousedown', handleLeftClick);
+            canvas.removeEventListener('mousedown', handleMouseDown);
+            canvas.removeEventListener('mousemove', handleMouseMove);
+            canvas.removeEventListener('mouseup', handleMouseUp);
             canvas.removeEventListener('contextmenu', handleRightClick);
             window.removeEventListener('keydown', handleKeyDown);
         };
-    }, [enableRig, enableTransform, onMeshSelect]);
+    }, [enableRig, enableTransform, onMeshSelect, onLeftClick]);
 
     return <div ref={containerRef} className="w-full h-full" />;
 }
