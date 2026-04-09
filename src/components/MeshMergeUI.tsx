@@ -115,7 +115,7 @@ export default function MeshMergeUI({
         sceneRef.current.removeObject(clone2Ref.current);
         // Connector is a Group, dispose its helpers manually
         connectorRef.current?.dispose();
-        sceneRef.current.remove(connectorRef.current);
+        sceneRef.current.removeObject(connectorRef.current);
         sceneRef.current.insertObject(flowApi.state.resultRef.current);
 
         clone1Ref.current = null;
@@ -136,7 +136,7 @@ export default function MeshMergeUI({
             }
             if (connectorRef.current) {
                 connectorRef.current.dispose();
-                sceneRef.current?.remove(connectorRef.current);
+                sceneRef.current?.removeObject(connectorRef.current);
                 connectorRef.current = null;
             }
         };
