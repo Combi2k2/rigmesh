@@ -151,13 +151,19 @@ export const getSkinWeights = (mesh: THREE.SkinnedMesh): { skinWeights: number[]
     return { skinWeights, skinIndices };
 }
 export const extractMeshData = (mesh: THREE.SkinnedMesh | THREE.Mesh): MeshData => {
+    mesh.updateMatrixWorld(true);
     const meshData: MeshData = [[], []];
     const posAttr = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
     const idxAttr = mesh.geometry.getIndex()!;
-    for (let i = 0; i < posAttr.count; i++) {
-        let v = new THREE.Vector3();
+    const isSkinned = (mesh as THREE.SkinnedMesh).isSkinnedMesh;
 
+    for (let i = 0; i < posAttr.count; i++) {
+        const v = new THREE.Vector3();
         v.fromBufferAttribute(posAttr, i);
+        if (isSkinned) {
+            // Apply bone deformation to get the actual posed position
+            (mesh as THREE.SkinnedMesh).applyBoneTransform(i, v);
+        }
         v.applyMatrix4(mesh.matrixWorld);
         meshData[0].push(new Vec3(v.x, v.y, v.z));
     }
@@ -237,4 +243,13 @@ export const skinnedMeshToData = (skinnedMesh: THREE.SkinnedMesh): SkinnedMeshDa
     let { skinWeights, skinIndices } = getSkinWeights(skinnedMesh);
 
     return { mesh, skel, skinWeights, skinIndices };
+}
+/**
+ * Deep-clone a SkinnedMesh via serialize/deserialize round-trip.
+ * Produces a fully independent copy: own geometry, material, skeleton, and userData.
+ * The clone reflects the current posed (bone-deformed) geometry of the source.
+ */
+export const cloneSkinnedMesh = (source: THREE.SkinnedMesh): THREE.SkinnedMesh => {
+    const data = skinnedMeshToData(source);
+    return skinnedMeshFromData(data);
 }
