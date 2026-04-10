@@ -1,8 +1,9 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import { useScene, SceneHooks } from '@/hooks/useScene';
 import { traceMesh } from '@/utils/threeSkel';
+import ToolControlBar, { ToolMode } from '@/components/ToolControlBar';
 import * as THREE from 'three';
 
 export interface SceneProps {
@@ -11,6 +12,7 @@ export interface SceneProps {
     onMeshSelect?: (mesh: THREE.SkinnedMesh) => void;
     onSceneReady?: (api: SceneHooks) => void;
     onLeftClick?: (mesh: THREE.SkinnedMesh | null, directMeshClick: boolean) => void;
+    onToolChange?: (tool: ToolMode) => void;
 }
 
 /**
@@ -25,11 +27,35 @@ export default function Scene({
     onMeshSelect,
     onSceneReady,
     onLeftClick,
+    onToolChange,
 }: SceneProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const sceneApi = useScene(containerRef);
     const apiRef = useRef(sceneApi);
     apiRef.current = sceneApi;
+
+    const [activeTool, setActiveTool] = useState<ToolMode>('select');
+    const [cameraLocked, setCameraLocked] = useState(false);
+    const activeToolRef = useRef(activeTool);
+    activeToolRef.current = activeTool;
+
+    const handleToolChange = useCallback((tool: ToolMode) => {
+        setActiveTool(tool);
+        if (tool === 'select') {
+            apiRef.current.detach();
+        } else {
+            apiRef.current.setMode(tool);
+        }
+        onToolChange?.(tool);
+    }, [onToolChange]);
+
+    const handleLockToggle = useCallback(() => {
+        setCameraLocked(prev => {
+            const next = !prev;
+            apiRef.current.setOrbitEnabled(!next);
+            return next;
+        });
+    }, []);
 
     useEffect(() => {
         onSceneReady?.(apiRef.current);
@@ -41,13 +67,6 @@ export default function Scene({
 
         const canvas = container.querySelector('canvas');
         if (!canvas) return;
-
-        const handleKeyDown = (event: KeyboardEvent) => {
-            const key = event.key.toLowerCase();
-            if (key === 'g')    apiRef.current.setMode('translate');
-            if (key === 'r')    apiRef.current.setMode('rotate');
-            if (key === 's')    apiRef.current.setMode('scale');
-        };
 
         const DRAG_THRESHOLD = 4; // pixels
         let mousePressed = false;
@@ -87,9 +106,12 @@ export default function Scene({
             }
 
             if (result instanceof THREE.SkinnedMesh) {
-                if (enableTransform) {
+                if (enableTransform && activeToolRef.current !== 'select') {
+                    apiRef.current.setMode(activeToolRef.current);
                     apiRef.current.setSpace('world');
                     apiRef.current.attach(mesh);
+                } else {
+                    apiRef.current.detach();
                 }
                 if (mesh.geometry.getAttribute('color'))
                     mesh.geometry.deleteAttribute('color');
@@ -105,9 +127,12 @@ export default function Scene({
             const colors = new Float32Array(nV * 3);
 
             if (result instanceof THREE.Bone) {
-                if (enableRig) {
+                if (enableRig && activeToolRef.current !== 'select') {
+                    apiRef.current.setMode(activeToolRef.current);
                     apiRef.current.setSpace('local');
                     apiRef.current.attach(result);
+                } else if (enableRig) {
+                    apiRef.current.detach();
                 }
                 const index = mesh.skeleton.bones.indexOf(result);
                 const skinIndicesAttr = mesh.geometry.getAttribute('skinIndex') as THREE.BufferAttribute;
@@ -161,15 +186,25 @@ export default function Scene({
         canvas.addEventListener('mousemove', handleMouseMove);
         canvas.addEventListener('mouseup', handleMouseUp);
         canvas.addEventListener('contextmenu', handleRightClick);
-        window.addEventListener('keydown', handleKeyDown);
         return () => {
             canvas.removeEventListener('mousedown', handleMouseDown);
             canvas.removeEventListener('mousemove', handleMouseMove);
             canvas.removeEventListener('mouseup', handleMouseUp);
             canvas.removeEventListener('contextmenu', handleRightClick);
-            window.removeEventListener('keydown', handleKeyDown);
         };
     }, [enableRig, enableTransform, onMeshSelect, onLeftClick]);
 
-    return <div ref={containerRef} className="w-full h-full" />;
+    return (
+        <div className="w-full h-full relative">
+            <div ref={containerRef} className="w-full h-full" />
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40">
+                <ToolControlBar
+                    activeTool={activeTool}
+                    cameraLocked={cameraLocked}
+                    onToolChange={handleToolChange}
+                    onLockToggle={handleLockToggle}
+                />
+            </div>
+        </div>
+    );
 }
