@@ -31,6 +31,7 @@ export interface SceneHooks {
     detach: () => void;
     setSpace: (space: TransformSpace) => void;
     setMode: (mode: TransformMode) => void;
+    setOrbitEnabled: (enabled: boolean) => void;
 }
 
 // Default configuration constants
@@ -165,6 +166,9 @@ export function useScene(containerRef: RefObject<HTMLDivElement>): SceneHooks {
     }, []);
     const setMode = useCallback((mode: TransformMode) => {
         objectControlsRef.current?.setMode(mode);
+    }, []);
+    const setOrbitEnabled = useCallback((enabled: boolean) => {
+        if (cameraControlsRef.current) cameraControlsRef.current.enabled = enabled;
     }, []);
 
     useEffect(() => {
@@ -329,5 +333,6 @@ export function useScene(containerRef: RefObject<HTMLDivElement>): SceneHooks {
         detach,
         setSpace,
         setMode,
+        setOrbitEnabled,
     };
 }
