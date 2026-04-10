@@ -16,6 +16,7 @@ import Scene from '@/components/base/Scene';
 import Sidebar from '@/components/base/Sidebar';
 import ToolOpsBar from '@/components/ToolOpsBar';
 import ToolNetBar from '@/components/ToolNetBar';
+import { ToolMode } from '@/components/ToolControlBar';
 import Canvas from '@/components/Canvas';
 import MeshGenUI from '@/components/MeshGenUI';
 import MeshCutUI from '@/components/MeshCutUI';
@@ -61,6 +62,20 @@ function App() {
     const handleSceneReady = useCallback((api: SceneHooks) => {
         sceneApiRef.current = api;
         setThreeScene(api.getScene());
+    }, []);
+
+    const handleToolChange = useCallback((tool: ToolMode) => {
+        if (tool !== 'select') {
+            setSelectedMeshes(prev => {
+                const last = prev[prev.length - 1];
+                if (last) {
+                    sceneApiRef.current?.setMode(tool);
+                    sceneApiRef.current?.setSpace('world');
+                    sceneApiRef.current?.attach(last);
+                }
+                return prev;
+            });
+        }
     }, []);
 
     // --- Selection ---
@@ -251,6 +266,7 @@ function App() {
                         enableTransform
                         onSceneReady={handleSceneReady}
                         onLeftClick={handleLeftClick}
+                        onToolChange={handleToolChange}
                     />
                     <div className="absolute bottom-4 right-4 z-40 flex flex-col items-center gap-2">
                         <ToolOpsBar
