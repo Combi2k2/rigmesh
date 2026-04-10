@@ -58,6 +58,10 @@ export default function Scene({
     }, []);
 
     useEffect(() => {
+        apiRef.current.setOrbitEnabled(!cameraLocked);
+    });
+
+    useEffect(() => {
         onSceneReady?.(apiRef.current);
     }, [onSceneReady]);
 
