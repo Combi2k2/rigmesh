@@ -43,6 +43,8 @@ function App() {
     const sceneApiRef = useRef<SceneHooks | null>(null);
     const [threeScene, setThreeScene] = useState<THREE.Scene | null>(null);
     const [selectedMeshes, setSelectedMeshes] = useState<THREE.SkinnedMesh[]>([]);
+    const [viewWireframe, setViewWireframe] = useState(false);
+    const [viewSkeleton, setViewSkeleton] = useState(true);
 
     // Flow states
     const [showCanvas, setShowCanvas] = useState(false);
@@ -243,6 +245,29 @@ function App() {
         setSkelOpsMesh(null);
     }, [skelOpsMesh]);
 
+    // Apply wireframe visibility (SkinnedMesh only)
+    useEffect(() => {
+        if (!threeScene) return;
+        threeScene.traverse(obj => {
+            if (obj instanceof THREE.SkinnedMesh) {
+                const mat = obj.material;
+                if (mat instanceof THREE.MeshStandardMaterial) {
+                    mat.wireframe = viewWireframe;
+                }
+            }
+        });
+    }, [threeScene, viewWireframe]);
+
+    // Apply skeleton helper visibility
+    useEffect(() => {
+        if (!threeScene) return;
+        threeScene.traverse(obj => {
+            if (obj.userData?.isHelper) {
+                obj.visible = viewSkeleton;
+            }
+        });
+    }, [threeScene, viewSkeleton]);
+
     // Trigger resize when returning from meshgen
     useEffect(() => {
         if (!showMeshGenUI && sceneContainerRef.current) {
@@ -286,7 +311,14 @@ function App() {
                 </div>
                 {/* Right sidebar */}
                 <div className="w-56 flex-shrink-0 border-l border-gray-700 overflow-hidden">
-                    <Sidebar scene={threeScene} onSelect={handleSceneGraphSelect} />
+                    <Sidebar
+                        scene={threeScene}
+                        onSelect={handleSceneGraphSelect}
+                        viewWireframe={viewWireframe}
+                        viewSkeleton={viewSkeleton}
+                        onWireframeToggle={setViewWireframe}
+                        onSkeletonToggle={setViewSkeleton}
+                    />
                 </div>
             </div>
 
