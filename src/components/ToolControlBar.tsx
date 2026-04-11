@@ -14,7 +14,7 @@ export interface ToolControlBarProps {
 }
 
 const tools: { mode: ToolMode; label: string; icon: React.ReactNode; shortcut: string }[] = [
-    { mode: 'select',    label: 'Select',    icon: <MousePointer2 size={20} />, shortcut: 'X' },
+    { mode: 'select',    label: 'Select',    icon: <MousePointer2 size={20} />, shortcut: '' },
     { mode: 'translate', label: 'Translate', icon: <Move size={20} />,          shortcut: 'G' },
     { mode: 'rotate',    label: 'Rotate',    icon: <RefreshCcw size={20} />,    shortcut: 'R' },
     { mode: 'scale',     label: 'Scale',     icon: <Expand size={20} />,        shortcut: 'S' },
@@ -30,7 +30,6 @@ export default function ToolControlBar({
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
             const key = e.key.toLowerCase();
-            if (key === 'x') onToolChange('select');
             if (key === 'g') onToolChange('translate');
             if (key === 'r') onToolChange('rotate');
             if (key === 's') onToolChange('scale');
@@ -42,7 +41,7 @@ export default function ToolControlBar({
 
     return (
         <div className="flex items-center gap-1 px-3 py-2 rounded-2xl bg-gray-900/85 backdrop-blur-sm border border-gray-700 shadow-lg">
-            <Tooltip label="Select (X)" position="top" withArrow>
+            <Tooltip label="Select" position="top" withArrow>
                 <button
                     onClick={() => onToolChange('select')}
                     className={`p-2 rounded-lg transition-all duration-150 ${

@@ -1,18 +1,24 @@
 'use client';
 
-import { useRef, useCallback, useEffect, useMemo } from 'react';
+import { useRef, useCallback, useEffect, useMemo, useState } from 'react';
 import * as THREE from 'three';
 import { Vec3 } from '@/interface';
 import { SceneHooks } from '@/hooks/useScene';
 import { SkeletonBone } from '@/utils/threeSkel';
 import { SkeletonJoint } from '@/utils/threeSkel';
 import { useScene } from '@/hooks/useScene';
+import ToolControlBar, { ToolMode } from '@/components/ToolControlBar';
 import Controller from '@/components/base/Controller';
 
 import { computeSkinWeightsGlobal } from '@/core/skin';
 import { skinnedMeshFromData } from '@/utils/threeMesh';
 import { skinnedMeshToData } from '@/utils/threeMesh';
 import { buildMesh } from '@/utils/threeMesh';
+
+const JOINT_DEFAULT_COLOR  = 0x00ff00;
+const JOINT_SELECTED_COLOR = 0xffaa00;
+const BONE_DEFAULT_COLOR   = 0x0000ff;
+const BONE_SELECTED_COLOR  = 0xffaa00;
 
 export interface SkelOpsUIProps {
     skinnedMesh: THREE.SkinnedMesh;
@@ -29,9 +35,18 @@ export default function SkelOpsUI({
     const sceneApi = useScene(containerRef);
     const apiRef = useRef<SceneHooks>(null);
     apiRef.current = sceneApi;
+
     const meshRef = useRef<THREE.Mesh | null>(null);
     const helperRef = useRef<THREE.Group | null>(null);
-    const selectRef = useRef<[THREE.Bone, THREE.Bone] | null>(null);
+    const selectedBoneRef = useRef<[THREE.Bone, THREE.Bone] | null>(null);
+    const selectedJointRef = useRef<THREE.Bone | null>(null);
+
+    const [activeTool, setActiveTool] = useState<ToolMode>('select');
+    const [cameraLocked, setCameraLocked] = useState(false);
+    const activeToolRef = useRef(activeTool);
+    activeToolRef.current = activeTool;
+
+    // --- Helpers ---
 
     const findBoneHelper = useCallback((boneA: THREE.Bone, boneB: THREE.Bone) => {
         return helperRef.current.children.find(child => {
@@ -41,6 +56,7 @@ export default function SkelOpsUI({
             return true;
         });
     }, []);
+
     const findJointHelper = useCallback((bone: THREE.Bone) => {
         return helperRef.current.children.find(child => {
             if (!child?.isHelperJoint) return false;
@@ -48,6 +64,7 @@ export default function SkelOpsUI({
             return true;
         });
     }, []);
+
     const removeHelper = useCallback((helper: SkeletonBone | SkeletonJoint | null) => {
         if (helper) {
             helper.dispose();
@@ -55,10 +72,81 @@ export default function SkelOpsUI({
         }
     }, []);
 
+    const clearSelection = useCallback(() => {
+        // Unhighlight bone segment
+        if (selectedBoneRef.current) {
+            const helper = findBoneHelper(selectedBoneRef.current[0], selectedBoneRef.current[1]);
+            if (helper) {
+                helper.material.color.set(BONE_DEFAULT_COLOR);
+                helper.material.needsUpdate = true;
+            }
+            selectedBoneRef.current = null;
+        }
+        // Unhighlight joint
+        if (selectedJointRef.current) {
+            const helper = findJointHelper(selectedJointRef.current);
+            if (helper) {
+                helper.material.color.set(JOINT_DEFAULT_COLOR);
+                helper.material.needsUpdate = true;
+            }
+            selectedJointRef.current = null;
+        }
+        apiRef.current?.detach();
+    }, [findBoneHelper, findJointHelper]);
+
+    const selectJoint = useCallback((bone: THREE.Bone) => {
+        clearSelection();
+        selectedJointRef.current = bone;
+        const helper = findJointHelper(bone);
+        if (helper) {
+            helper.material.color.set(JOINT_SELECTED_COLOR);
+            helper.material.needsUpdate = true;
+        }
+        // If a transform tool is active, attach immediately
+        if (activeToolRef.current !== 'select') {
+            apiRef.current?.setMode(activeToolRef.current);
+            apiRef.current?.setSpace('world');
+            apiRef.current?.attach(bone);
+        }
+    }, [clearSelection, findJointHelper]);
+
+    const selectBoneSegment = useCallback((boneA: THREE.Bone, boneB: THREE.Bone) => {
+        clearSelection();
+        selectedBoneRef.current = [boneA, boneB];
+        const helper = findBoneHelper(boneA, boneB);
+        if (helper) {
+            helper.material.color.set(BONE_SELECTED_COLOR);
+            helper.material.needsUpdate = true;
+        }
+    }, [clearSelection, findBoneHelper]);
+
+    // --- Tool control ---
+
+    const handleToolChange = useCallback((tool: ToolMode) => {
+        setActiveTool(tool);
+        activeToolRef.current = tool;
+        if (tool === 'select') {
+            apiRef.current?.detach();
+        } else if (selectedJointRef.current) {
+            apiRef.current?.setMode(tool);
+            apiRef.current?.setSpace('world');
+            apiRef.current?.attach(selectedJointRef.current);
+        }
+    }, []);
+
+    const handleLockToggle = useCallback(() => {
+        setCameraLocked(prev => {
+            const next = !prev;
+            apiRef.current?.setOrbitEnabled(!next);
+            return next;
+        });
+    }, []);
+
+    // --- Setup scene objects ---
 
     useEffect(() => {
-        const { mesh, skel, skinWeights, skinIndices } = skinnedMeshToData(skinnedMesh);
-        
+        const { mesh, skel } = skinnedMeshToData(skinnedMesh);
+
         meshRef.current = buildMesh(mesh, false);
         helperRef.current = new THREE.Group();
         helperRef.current.userData.isHelper = true;
@@ -82,19 +170,19 @@ export default function SkelOpsUI({
         apiRef.current?.insertObject(meshRef.current);
 
         return () => {
-            // Dispose helper joints/bones
             if (helperRef.current) {
                 helperRef.current.children.forEach(child => (child as any).dispose?.());
                 apiRef.current?.removeObject(helperRef.current);
                 helperRef.current = null;
             }
-            // Dispose the plain mesh
             if (meshRef.current) {
                 apiRef.current?.removeObject(meshRef.current);
                 meshRef.current = null;
             }
         };
     }, [skinnedMesh]);
+
+    // --- Event handlers ---
 
     useEffect(() => {
         const container = containerRef.current;
@@ -104,16 +192,15 @@ export default function SkelOpsUI({
         if (!canvas) return;
 
         const handleKeyDown = (event: KeyboardEvent) => {
-            apiRef.current.detach();
             const key = event.key.toLowerCase();
-            if (selectRef.current === null) return;
-            if (selectRef.current instanceof THREE.Bone)
-                return;
 
             if (key !== 'x' && key !== ' ') return;
+            if (selectedBoneRef.current === null) return;
 
-            let [boneA, boneB] = selectRef.current;
-            
+            apiRef.current?.detach();
+
+            let [boneA, boneB] = selectedBoneRef.current;
+
             const posA = new THREE.Vector3();
             const posB = new THREE.Vector3();
             boneA.getWorldPosition(posA);
@@ -121,6 +208,7 @@ export default function SkelOpsUI({
             const posC = (new THREE.Vector3()).addVectors(posA, posB).multiplyScalar(0.5);
 
             if (key === 'x') {
+                // Merge: move boneA to midpoint, remove boneB
                 boneA.position.copy(posC);
 
                 removeHelper(findBoneHelper(boneA, boneB));
@@ -130,7 +218,10 @@ export default function SkelOpsUI({
                     if (child.jointA === boneB) child.jointA = boneA;
                     if (child.jointB === boneB) child.jointB = boneA;
                 }
+                selectedBoneRef.current = null;
+                selectJoint(boneA);
             } else {
+                // Split: insert new bone at midpoint
                 const boneC = new THREE.Bone();
                 boneC.position.copy(posC);
                 apiRef.current.insertObject(boneC);
@@ -139,44 +230,34 @@ export default function SkelOpsUI({
                 helperRef.current.add(new SkeletonJoint(boneC));
                 helperRef.current.add(new SkeletonBone(boneA, boneC));
                 helperRef.current.add(new SkeletonBone(boneC, boneB));
+                selectedBoneRef.current = null;
+                selectJoint(boneC);
             }
         };
 
-        const handleLeftClick = (event: MouseEvent) => {
+        const handleMouseUp = (event: MouseEvent) => {
             if (event.button !== 0) return;
-            if (selectRef.current !== null) {
-                const helper = findBoneHelper(selectRef.current[0], selectRef.current[1]);
-                if (helper) {
-                    helper.material.color.set(0x0000ff);
-                    helper.material.needsUpdate = true;
-                }
-            }
+
             const result = apiRef.current.raycast(event.clientX, event.clientY);
+
             if (result?.isBone) {
-                apiRef.current.attach(result);
-                apiRef.current.setSpace('world');
-                apiRef.current.setMode('translate');
+                selectJoint(result as THREE.Bone);
+            } else if (Array.isArray(result)) {
+                selectBoneSegment(result[0], result[1]);
             } else {
-                apiRef.current.detach();
-            }
-            if (!Array.isArray(result)) {
-                selectRef.current = null;
-            } else {
-                selectRef.current = result as [THREE.Bone, THREE.Bone];
-                const helper = findBoneHelper(selectRef.current[0], selectRef.current[1]);
-                if (helper) {
-                    helper.material.color.set(0xffaa00);
-                    helper.material.needsUpdate = true;
-                }
+                clearSelection();
             }
         };
-        canvas.addEventListener('mousedown', handleLeftClick);
+
+        canvas.addEventListener('mouseup', handleMouseUp);
         window.addEventListener('keydown', handleKeyDown);
         return () => {
-            canvas.removeEventListener('mousedown', handleLeftClick);
+            canvas.removeEventListener('mouseup', handleMouseUp);
             window.removeEventListener('keydown', handleKeyDown);
         };
-    }, []);
+    }, [clearSelection, selectJoint, selectBoneSegment, findBoneHelper, findJointHelper, removeHelper]);
+
+    // --- Complete ---
 
     const onNext = useCallback(() => {
         const V = [], F = [];
@@ -199,7 +280,7 @@ export default function SkelOpsUI({
         }
         const joints = helperRef.current.children.filter(child => child?.isHelperJoint).map(child => child.joint);
         const bones = helperRef.current.children.filter(child => child?.isHelperBone).map(child => [child.jointA, child.jointB]);
-        
+
         joints.forEach((joint: THREE.Bone) => {
             const pos = new THREE.Vector3();
             joint.getWorldPosition(pos);
@@ -224,14 +305,24 @@ export default function SkelOpsUI({
     const steps = useMemo(() => [
         {
             name: 'Skeleton Refinement',
-            desc: "Click on a bone segment to select it. Press X to split the bone segment, or Space to merge 2 endpoints.",
+            desc: "Click on a bone segment to select it. Press X to merge endpoints, or Space to split. Click a joint to select it, then use G/R/S to transform.",
             params: [],
         },
     ], []);
 
     return (
         <div className="absolute inset-0 z-50 flex flex-col sm:flex-row bg-white dark:bg-gray-900">
-            <div ref={containerRef} className="flex-1 min-w-0 min-h-0 relative"/>
+            <div className="flex-1 min-w-0 min-h-0 relative">
+                <div ref={containerRef} className="w-full h-full" />
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40">
+                    <ToolControlBar
+                        activeTool={activeTool}
+                        cameraLocked={cameraLocked}
+                        onToolChange={handleToolChange}
+                        onLockToggle={handleLockToggle}
+                    />
+                </div>
+            </div>
             <div
                 role="complementary"
                 className="flex-shrink-0 w-full sm:w-80 border-l border-gray-700 bg-gray-900 overflow-auto shadow-xl flex flex-col"
