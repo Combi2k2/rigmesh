@@ -10,7 +10,7 @@
     "test": "jest"
   },
   "dependencies": {
-    "@mantine/core": "^8.3.14",
+    "@mantine/core": "^8.3.18",
     "@mantine/hooks": "^8.3.14",
     "@tabler/icons-react": "^3.41.1",
     "cdt2d": "^1.0.0",
