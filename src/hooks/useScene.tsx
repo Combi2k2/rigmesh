@@ -32,13 +32,15 @@ export interface SceneHooks {
     setSpace: (space: TransformSpace) => void;
     setMode: (mode: TransformMode) => void;
     setOrbitEnabled: (enabled: boolean) => void;
+    setViewWireframe: (enabled: boolean) => void;
+    setViewSkeleton: (enabled: boolean) => void;
 }
 
 // Default configuration constants
 const DEFAULT_FOV = 75;
 const DEFAULT_NEAR = 0.1;
 const DEFAULT_FAR = 100000;
-const DEFAULT_INITIAL_POSITION = { x: 0, y: 0, z: 100 };
+const DEFAULT_INITIAL_POSITION = { x: 200, y: 200, z: 200 };
 const DEFAULT_BACKGROUND_COLOR = 0x1a1a2e;
 /**
  * Creates and manages a 3D scene: scene, camera, renderer, OrbitControls, ViewportGizmo, and TransformControls.
@@ -169,6 +171,22 @@ export function useScene(containerRef: RefObject<HTMLDivElement>): SceneHooks {
     }, []);
     const setOrbitEnabled = useCallback((enabled: boolean) => {
         if (cameraControlsRef.current) cameraControlsRef.current.enabled = enabled;
+    }, []);
+
+    const setViewWireframe = useCallback((enabled: boolean) => {
+        if (!sceneRef.current) return;
+        sceneRef.current.children.forEach(obj => {
+            if (obj instanceof THREE.Mesh)
+                obj.material.wireframe = enabled;
+        });
+    }, []);
+
+    const setViewSkeleton = useCallback((enabled: boolean) => {
+        if (!sceneRef.current) return;
+        sceneRef.current.children.forEach(obj => {
+            if (obj.userData?.isHelper)
+                obj.visible = enabled;
+        });
     }, []);
 
     useEffect(() => {
@@ -334,5 +352,7 @@ export function useScene(containerRef: RefObject<HTMLDivElement>): SceneHooks {
         setSpace,
         setMode,
         setOrbitEnabled,
+        setViewWireframe,
+        setViewSkeleton,
     };
 }
