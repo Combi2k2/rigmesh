@@ -34,20 +34,20 @@ export interface MeshGenParams {
 export function useMeshGen(onComplete?: (mesh: THREE.SkinnedMesh) => void) {
     const [latestPath, setLatestPath] = useState<Vec2[] | null>(null);
     const [currentStep, setCurrentStep] = useState<number>(0);
-    
+
     const [isodistance, setIsodistance] = useState<number>(10);
     const [mesh2D, setMesh2D] = useState<[Vec2[], number[][]] | null>(null);
     const [mesh3D, setMesh3D] = useState<[Vec3[], number[][]] | null>(null);
-    
+
     const [laplacianIters, setLaplacianIters] = useState<number>(50);
     const [laplacianAlpha, setLaplacianAlpha] = useState<number>(0.5);
     const [chordData, setChordData] = useState<[Vec3[], Vec3[], number[]] | null>(null);
-    
+
     const [init3, setInit3] = useState<boolean>(false);
     const [smoothFactor, setSmoothFactor] = useState<number>(0.1);
     const [capOffset, setCapOffset] = useState<number>(0);
     const [junctionOffset, setJunctionOffset] = useState<number>(0);
-    
+
     const [init4, setInit4] = useState<boolean>(false);
     const [isometricIterations, setIsometricIterations] = useState<number>(6);
     const [isometricLength, setIsometricLength] = useState<number>(5);
@@ -62,54 +62,6 @@ export function useMeshGen(onComplete?: (mesh: THREE.SkinnedMesh) => void) {
     const [bonePruningThreshold, setBonePruningThreshold] = useState<number>(5);
   
     const meshGenRef = useRef<MeshGen | null>(null);
-
-    const findBoundary = (V: Vec2[], F: number[][]) => {
-        const n = V.length;
-        const adjList = new Array(n).fill(0).map(() => new Set<number>());
-
-        for (let [i0, i1, i2] of F) {
-            adjList[i0].add(i1);   adjList[i1].add(i0);
-            adjList[i0].add(i2);   adjList[i2].add(i0);
-            adjList[i1].add(i2);   adjList[i2].add(i1);
-        }
-        const boundary = [0];
-        
-        for (let i = 1; i < n; i++)
-            if (V[boundary[0]].x > V[i].x)
-                boundary[0] = i;
-        
-        let prev = new Vec2(
-            V[boundary[0]].x,
-            V[boundary[0]].y + 1
-        );
-        while (true) {
-            const currIdx = boundary[boundary.length - 1];
-            const curr = V[currIdx];
-
-            let minAngle = Infinity;
-            let minIdx = -1;
-
-            for (const i of adjList[currIdx]) {
-                const next = V[i];
-
-                const e0 = curr.minus(prev).unit();
-                const e1 = next.minus(curr).unit();
-                const sinTheta = e0.cross(e1);
-                const cosTheta = e0.dot(e1);
-                const angle = Math.atan2(sinTheta, cosTheta);
-
-                if (minAngle > angle) {
-                    minAngle = angle;
-                    minIdx = i;
-                }
-            }
-            if (minIdx === boundary[0])
-                break;
-            prev = curr;
-            boundary.push(minIdx);
-        }
-        return boundary.map(i => V[i]);
-    };
 
     const processStep1 = useCallback((path: Vec2[]) => {
         const meshGen = new MeshGen(path, isodistance);
@@ -260,6 +212,45 @@ export function useMeshGen(onComplete?: (mesh: THREE.SkinnedMesh) => void) {
         }
     }, [currentStep, mesh3D, skeleton, onComplete]);
 
+    const onFinish = useCallback((path: Vec2[]) => {
+        const centroid = path.reduce((acc, p) => acc.plus(p), new Vec2(0, 0)).over(path.length);
+        path = path.map(p => p.minus(centroid));
+        path = path.map(p => new Vec2(p.x, -p.y));
+
+        // Step 1: 2D mesh
+        const meshGen = new MeshGen(path, isodistance);
+
+        // Step 2: Chord smoothing
+        meshGen.runChordSmoothing(laplacianIters, laplacianAlpha);
+
+        // Step 3: 3D mesh + smoothing
+        meshGen.generatePipes();
+        meshGen.stitchCaps();
+        meshGen.stitchJunctions();
+        const [V, F] = meshGen.getMesh3D() as [Vec3[], number[][]];
+        meshGen.runMeshSmoothing(V, F, smoothFactor);
+
+        // Step 4: Isometric remesh
+        const length = isometricLength <= 5 ? -1 : isometricLength;
+        geo3d.runIsometricRemesh(V, F, isometricIterations, length);
+
+        // Step 5: Skeleton
+        const skel = meshGen.generateSkeleton(
+            boneDevThreshold, boneLenThreshold, bonePruningThreshold
+        ) as [Vec3[], [number, number][]];
+
+        // Final: skin weights + mesh
+        const skinWeights = computeSkinWeightsGlobal([V, F], skel);
+        return skinnedMeshFromData({
+            mesh: [V, F],
+            skel,
+            skinWeights,
+            skinIndices: null,
+        });
+    }, [isodistance, laplacianIters, laplacianAlpha, smoothFactor,
+        isometricIterations, isometricLength,
+        boneDevThreshold, boneLenThreshold, bonePruningThreshold]);
+
     const state: MeshGenState = {
         currentStep,
         mesh2D,
@@ -285,6 +276,7 @@ export function useMeshGen(onComplete?: (mesh: THREE.SkinnedMesh) => void) {
     return {
         state,
         params,
+        onFinish,
         onPathComplete: handlePathComplete,
         onNext: handleNext,
         onBack: handleBack,

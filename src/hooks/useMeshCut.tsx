@@ -101,9 +101,19 @@ export function useMeshCut(onCutComplete?: (meshes: THREE.SkinnedMesh[]) => void
         smoothFactor,
     };
 
+    const onFinish = useCallback((mesh: THREE.SkinnedMesh, plane: Plane) => {
+        const cutter = new MeshCut(mesh);
+        const meshes = cutter.runMeshSplit(plane);
+        meshes.forEach(m => cutter.runMeshStitch(m));
+        meshes.forEach(m => cutter.runMeshSmooth(m, smoothLayers, smoothFactor));
+        meshes.forEach(m => cutter.computeSkinWeights(m));
+        return meshes;
+    }, [smoothLayers, smoothFactor]);
+
     return {
         state,
         params,
+        onFinish,
         onMeshReady,
         onCutReady,
         onNext,

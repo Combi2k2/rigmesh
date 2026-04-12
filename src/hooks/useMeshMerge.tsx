@@ -106,9 +106,19 @@ export function useMeshMerge(onMergeComplete?: (mesh: THREE.SkinnedMesh) => void
         smoothFactor,
     };
 
+    const onFinish = useCallback((m1: THREE.SkinnedMesh, m2: THREE.SkinnedMesh, mergeParam: MergeParams, shouldSwap: boolean) => {
+        const merger = shouldSwap ? new MeshMerge(m2, m1, mergeParam) : new MeshMerge(m1, m2, mergeParam);
+        const result = merger.runTriangleRemoval();
+        merger.runMeshStitch(result);
+        merger.runMeshSmooth(result, smoothLayers, smoothFactor);
+        merger.computeSkinWeights(result);
+        return result;
+    }, [smoothLayers, smoothFactor]);
+
     return {
         state,
         params,
+        onFinish,
         onReady,
         onNext,
         onBack,
