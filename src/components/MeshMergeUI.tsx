@@ -2,13 +2,13 @@
 
 import { useRef, useCallback, useEffect, useState, useMemo } from 'react';
 import * as THREE from 'three';
-import { useMeshMerge } from '@/hooks/useMeshMerge';
+import { useMeshMerge, MeshMergeParams } from '@/hooks/useMeshMerge';
 import { SceneHooks } from '@/hooks/useScene';
 import { SkeletonConnector } from '@/utils/threeSkel';
 import { traceMesh } from '@/utils/threeSkel';
 
 import Scene from '@/components/base/Scene';
-import Controller from '@/components/base/Controller';
+import FlowUI from '@/components/base/FlowUI';
 import { cloneSkinnedMesh } from '@/utils/threeMesh';
 
 export interface MeshMergeUIProps {
@@ -16,6 +16,8 @@ export interface MeshMergeUIProps {
     mesh2: THREE.SkinnedMesh;
     onComplete?: (mesh: THREE.SkinnedMesh) => void;
     onCancel?: () => void;
+    initialParams?: MeshMergeParams;
+    onParamsChange?: (params: MeshMergeParams) => void;
 }
 
 export default function MeshMergeUI({
@@ -23,13 +25,19 @@ export default function MeshMergeUI({
     mesh2,
     onComplete,
     onCancel,
+    initialParams,
+    onParamsChange,
 }: MeshMergeUIProps) {
     const clone1Ref = useRef<THREE.SkinnedMesh | null>(null);
     const clone2Ref = useRef<THREE.SkinnedMesh | null>(null);
     const connectorRef = useRef<SkeletonConnector | null>(null);
     const sceneRef = useRef<SceneHooks | null>(null);
-    const flowApi = useMeshMerge(onComplete);
+    const flowApi = useMeshMerge(onComplete, initialParams);
     const [ready, setReady] = useState(false);
+
+    useEffect(() => {
+        onParamsChange?.(flowApi.params);
+    }, [flowApi.params, onParamsChange]);
 
     const handleReady = useCallback((api: SceneHooks) => {
         sceneRef.current = api;
@@ -50,6 +58,7 @@ export default function MeshMergeUI({
             tgt: connectorRef.current.target,
         });
     }, []);
+
 
     useEffect(() => {
         if (!ready) return;
@@ -147,8 +156,7 @@ export default function MeshMergeUI({
         { name: 'Mesh Cleanup', desc: 'Triangle removal and cleanup.', params: [] },
         { name: 'Mesh Stitch', desc: 'Stitch boundaries between meshes.', params: [] },
         {
-            name: 'Mesh Smooth',
-            desc: 'Smooth the stitched region. Layers control extent, factor controls strength.',
+            name: 'Mesh Smooth', desc: 'Smooth the stitched region. Layers control extent, factor controls strength.',
             params: [
                 { name: 'smoothLayers', value: flowApi.params.smoothLayers, min: 0, max: 10, step: 1, onChange: flowApi.onParamChange.setSmoothLayers },
                 { name: 'smoothFactor', value: flowApi.params.smoothFactor, min: 0, max: 5, step: 0.05, onChange: flowApi.onParamChange.setSmoothFactor },
@@ -157,29 +165,38 @@ export default function MeshMergeUI({
         { name: 'SkinWeight Computation', desc: 'Compute skin weights for the merged mesh.', params: [] },
     ], [flowApi.params.smoothLayers, flowApi.params.smoothFactor]);
 
+
+    const handleFinish = useCallback(() => {
+        const result = flowApi.onFinish();
+        if (result) {
+            onComplete?.(result);
+        }
+    }, [flowApi.onFinish, onComplete]);
+
+    const handleWireframeToggle = useCallback((enabled: boolean) => {
+        sceneRef.current?.setViewWireframe(enabled);
+    }, []);
+    const handleSkeletonToggle = useCallback((enabled: boolean) => {
+        sceneRef.current?.setViewSkeleton(enabled);
+    }, []);
+
     return (
-        <div className="absolute inset-0 z-50 flex flex-col sm:flex-row bg-white dark:bg-gray-900">
-            <div className="flex-1 min-w-0 min-h-0 relative">
-                <Scene
-                    enableRig={false}
-                    enableTransform={true}
-                    onSceneReady={handleReady}
-                />
-            </div>
-            <div
-                role="complementary"
-                className="flex-shrink-0 w-full sm:w-80 border-l border-gray-700 bg-gray-900 overflow-auto shadow-xl flex flex-col"
-                data-mantine-color-scheme="dark"
-            >
-                <div className="p-4 flex-1 min-h-0">
-                    <Controller
-                        currentStep={flowApi.state.currentStep}
-                        onNext={flowApi.onNext}
-                        onCancel={() => { flowApi.onReset(); onCancel?.(); }}
-                        steps={steps}
-                    />
-                </div>
-            </div>
-        </div>
+        <FlowUI
+            instructions="Merge two meshes. Drag meshes into position, click a mesh to update the connector, and press Space to cycle merge modes (snap/split/connect)."
+            steps={steps}
+            currentStep={flowApi.state.currentStep}
+            onNext={flowApi.onNext}
+            onBack={flowApi.onBack}
+            onCancel={() => { flowApi.onReset(); onCancel?.(); }}
+            onFinish={handleFinish}
+            onWireframeToggle={handleWireframeToggle}
+            onSkeletonToggle={handleSkeletonToggle}
+        >
+            <Scene
+                enableRig={false}
+                enableTransform={true}
+                onSceneReady={handleReady}
+            />
+        </FlowUI>
     );
 }

@@ -2,13 +2,15 @@
 
 import { useRef, useCallback, useEffect, useState, useMemo } from 'react';
 import * as THREE from 'three';
-import { useMeshGen } from '@/hooks/useMeshGen';
+import { useMeshGen, MeshGenParams } from '@/hooks/useMeshGen';
 import { SceneHooks } from '@/hooks/useScene';
 import { Vec2, Vec3 } from '@/interface';
 import { createSkeleton } from '@/utils/threeSkel';
 
 import Scene from '@/components/base/Scene';
-import Controller from '@/components/base/Controller';
+import FlowUI from '@/components/base/FlowUI';
+import Canvas from '@/components/Canvas';
+import { Point } from '@/interface/point';
 
 const COLORS = {
     POLYGON: 0xffffff,
@@ -49,16 +51,28 @@ function disposeDisplayGroup(group: THREE.Group) {
 }
 
 export interface MeshGenUIProps {
-    path: Vec2[];
+    path?: Vec2[];
     onComplete?: (mesh: THREE.SkinnedMesh) => void;
     onCancel?: () => void;
+    initialParams?: MeshGenParams;
+    onParamsChange?: (params: MeshGenParams) => void;
 }
 
-export default function MeshGenUI({ path, onComplete, onCancel }: MeshGenUIProps) {
+export default function MeshGenUI({ path, onComplete, onCancel, initialParams, onParamsChange }: MeshGenUIProps) {
     const sceneRef = useRef<SceneHooks | null>(null);
-    const flowApi = useMeshGen(onComplete);
+    const flowApi = useMeshGen(onComplete, initialParams);
     const displayGroupRef = useRef<THREE.Group | null>(null);
     const [ready, setReady] = useState(false);
+    const [drawnPath, setDrawnPath] = useState<Vec2[] | null>(path ?? null);
+
+    const handlePathComplete = useCallback((points: Point[]) => {
+        setDrawnPath(points as Vec2[]);
+    }, []);
+
+    // Sync params back to parent
+    useEffect(() => {
+        onParamsChange?.(flowApi.params);
+    }, [flowApi.params, onParamsChange]);
 
     const handleReady = useCallback(
         (api: SceneHooks) => {
@@ -67,10 +81,17 @@ export default function MeshGenUI({ path, onComplete, onCancel }: MeshGenUIProps
             const group = new THREE.Group();
             displayGroupRef.current = group;
             api.insertObject(group);
-            flowApi.onPathComplete(path);
         },
-        [path, flowApi.onPathComplete]
+        []
     );
+
+    // Start processing when we have both a drawn path and a ready scene
+    useEffect(() => {
+        if (drawnPath && ready && flowApi.state.currentStep === 0) {
+            flowApi.onPathComplete(drawnPath);
+        }
+    }, [drawnPath, ready, flowApi.state.currentStep, flowApi.onPathComplete]);
+
 
     // Sync display to state: clear display group and re-render current step
     useEffect(() => {
@@ -167,150 +188,97 @@ export default function MeshGenUI({ path, onComplete, onCancel }: MeshGenUIProps
         };
     }, []);
 
-    const steps = useMemo(
-        () => [
-            {
-                name: '2D Mesh',
-                desc: 'Triangulated 2D mesh from the outline path. Adjust isodistance to control density.',
-                params: [
-                    {
-                        name: 'isodistance',
-                        value: flowApi.params.isodistance,
-                        min: 2,
-                        max: 30,
-                        step: 1,
-                        onChange: flowApi.onParamChange.setIsodistance,
-                    },
-                ],
-            },
-            {
-                name: 'Chord Smoothing',
-                desc: 'Chord smoothing for pipe axis. Laplacian iterations and alpha control the stitch shape.',
-                params: [
-                    {
-                        name: 'laplacianIters',
-                        value: flowApi.params.laplacianIters,
-                        min: 0,
-                        max: 30,
-                        step: 1,
-                        onChange: flowApi.onParamChange.setLaplacianIters,
-                    },
-                    {
-                        name: 'laplacianAlpha',
-                        value: flowApi.params.laplacianAlpha,
-                        min: 0.1,
-                        max: 1,
-                        step: 0.05,
-                        onChange: flowApi.onParamChange.setLaplacianAlpha,
-                    },
-                ],
-            },
-            {
-                name: 'Mesh Smooth',
-                desc: 'Smooth the 3D pipe mesh. Higher factor = stronger smoothing.',
-                params: [
-                    {
-                        name: 'smoothFactor',
-                        value: flowApi.params.smoothFactor,
-                        min: 0.1,
-                        max: 20,
-                        step: 0.05,
-                        onChange: flowApi.onParamChange.setSmoothFactor,
-                    },
-                ],
-            },
-            {
-                name: 'Isometric Remesh',
-                desc: 'Remesh for more uniform triangles. Improves skeleton and skinning quality.',
-                params: [
-                    {
-                        name: 'isometricIters',
-                        value: flowApi.params.isometricIterations,
-                        min: 0,
-                        max: 10,
-                        step: 1,
-                        onChange: flowApi.onParamChange.setIsometricIterations,
-                    },
-                    {
-                        name: 'isometricLength',
-                        value: flowApi.params.isometricLength,
-                        min: 5,
-                        max: 20,
-                        step: 1,
-                        onChange: flowApi.onParamChange.setIsometricLength,
-                    },
-                ],
-            },
-            {
-                name: 'Skeleton',
-                desc: 'Auto-generated skeleton from mesh. Thresholds control bone placement and pruning.',
-                params: [
-                    {
-                        name: 'boneDevThreshold',
-                        value: flowApi.params.boneDevThreshold,
-                        min: 1,
-                        max: 200,
-                        step: 1,
-                        onChange: flowApi.onParamChange.setBoneDevThreshold,
-                    },
-                    {
-                        name: 'boneLenThreshold',
-                        value: flowApi.params.boneLenThreshold,
-                        min: 1,
-                        max: 200,
-                        step: 1,
-                        onChange: flowApi.onParamChange.setBoneLenThreshold,
-                    },
-                    {
-                        name: 'bonePruningThreshold',
-                        value: flowApi.params.bonePruningThreshold,
-                        min: 1,
-                        max: 200,
-                        step: 1,
-                        onChange: flowApi.onParamChange.setBonePruningThreshold,
-                    },
-                ],
-            },
-        ],
-        [
-            flowApi.params.isodistance,
-            flowApi.params.laplacianIters,
-            flowApi.params.laplacianAlpha,
-            flowApi.params.smoothFactor,
-            flowApi.params.isometricIterations,
-            flowApi.params.isometricLength,
-            flowApi.params.boneDevThreshold,
-            flowApi.params.boneLenThreshold,
-            flowApi.params.bonePruningThreshold,
-        ]
-    );
+    const steps = useMemo(() => [
+        {
+            name: '2D Mesh', desc: 'Triangulated 2D mesh from the outline path. Adjust isodistance to control density.',
+            params: [
+                { name: 'isodistance', value: flowApi.params.isodistance, min: 2, max: 30, step: 1, onChange: flowApi.onParamChange.setIsodistance },
+            ],
+        },
+        {
+            name: 'Chord Smoothing', desc: 'Chord smoothing for pipe axis. Laplacian iterations and alpha control the stitch shape.',
+            params: [
+                { name: 'laplacianIters', value: flowApi.params.laplacianIters, min: 0, max: 30, step: 1, onChange: flowApi.onParamChange.setLaplacianIters },
+                { name: 'laplacianAlpha', value: flowApi.params.laplacianAlpha, min: 0.1, max: 1, step: 0.05, onChange: flowApi.onParamChange.setLaplacianAlpha },
+            ],
+        },
+        {
+            name: 'Mesh Smooth', desc: 'Smooth the 3D pipe mesh. Higher factor = stronger smoothing.',
+            params: [
+                { name: 'smoothFactor', value: flowApi.params.smoothFactor, min: 0.1, max: 20, step: 0.05, onChange: flowApi.onParamChange.setSmoothFactor },
+            ],
+        },
+        {
+            name: 'Isometric Remesh', desc: 'Remesh for more uniform triangles. Improves skeleton and skinning quality.',
+            params: [
+                { name: 'isometricIters', value: flowApi.params.isometricIterations, min: 0, max: 10, step: 1, onChange: flowApi.onParamChange.setIsometricIterations },
+                { name: 'isometricLength', value: flowApi.params.isometricLength, min: 5, max: 20, step: 1, onChange: flowApi.onParamChange.setIsometricLength },
+            ],
+        },
+        {
+            name: 'Skeleton', desc: 'Auto-generated skeleton from mesh. Thresholds control bone placement and pruning.',
+            params: [
+                { name: 'boneDevThreshold', value: flowApi.params.boneDevThreshold, min: 1, max: 200, step: 1, onChange: flowApi.onParamChange.setBoneDevThreshold },
+                { name: 'boneLenThreshold', value: flowApi.params.boneLenThreshold, min: 1, max: 200, step: 1, onChange: flowApi.onParamChange.setBoneLenThreshold },
+                { name: 'bonePruningThreshold', value: flowApi.params.bonePruningThreshold, min: 1, max: 200, step: 1, onChange: flowApi.onParamChange.setBonePruningThreshold },
+            ],
+        },
+    ], [
+        flowApi.params.isodistance, flowApi.params.laplacianIters, flowApi.params.laplacianAlpha,
+        flowApi.params.smoothFactor, flowApi.params.isometricIterations, flowApi.params.isometricLength,
+        flowApi.params.boneDevThreshold, flowApi.params.boneLenThreshold, flowApi.params.bonePruningThreshold,
+    ]);
 
-    return (
-        <div className="absolute inset-0 z-50 flex flex-col sm:flex-row bg-white dark:bg-gray-900">
-            <div className="flex-1 min-w-0 min-h-0 relative">
-                <Scene
-                    enableRig={false}
-                    enableTransform={false}
-                    onSceneReady={handleReady}
-                />
-            </div>
-            <div
-                role="complementary"
-                className="flex-shrink-0 w-full sm:w-80 border-l border-gray-700 bg-gray-900 overflow-auto shadow-xl flex flex-col"
-                data-mantine-color-scheme="dark"
+
+    const handleFinish = useCallback(() => {
+        const mesh = flowApi.onFinish();
+        if (mesh) {
+            onComplete?.(mesh);
+        }
+    }, [flowApi.onFinish, onComplete]);
+
+    const handleWireframeToggle = useCallback((enabled: boolean) => {
+        sceneRef.current?.setViewWireframe(enabled);
+    }, []);
+    const handleSkeletonToggle = useCallback((enabled: boolean) => {
+        sceneRef.current?.setViewSkeleton(enabled);
+    }, []);
+
+    // Drawing phase: show Canvas
+    if (!drawnPath) {
+        return (
+            <FlowUI
+                instructions="Draw an outline by clicking and dragging on the canvas. The path closes automatically when you return near the start point."
+                steps={steps}
+                currentStep={0}
+                onNext={flowApi.onNext}
+                onBack={flowApi.onBack}
+                onCancel={() => { onCancel?.(); }}
+                onFinish={handleFinish}
             >
-                <div className="p-4 flex-1 min-h-0">
-                    <Controller
-                        currentStep={flowApi.state.currentStep}
-                        onNext={flowApi.onNext}
-                        onCancel={() => {
-                            flowApi.onReset();
-                            onCancel?.();
-                        }}
-                        steps={steps}
-                    />
-                </div>
-            </div>
-        </div>
+                <Canvas onPathComplete={handlePathComplete} />
+            </FlowUI>
+        );
+    }
+
+    // Processing phase: show Scene with step visualization
+    return (
+        <FlowUI
+            instructions="Mesh generation from a 2D outline path. Adjust parameters to control mesh density, smoothing, and skeleton extraction."
+            steps={steps}
+            currentStep={flowApi.state.currentStep}
+            onNext={flowApi.onNext}
+            onBack={flowApi.onBack}
+            onCancel={() => { flowApi.onReset(); onCancel?.(); }}
+            onFinish={handleFinish}
+            onWireframeToggle={handleWireframeToggle}
+            onSkeletonToggle={handleSkeletonToggle}
+        >
+            <Scene
+                enableRig={false}
+                enableTransform={false}
+                onSceneReady={handleReady}
+            />
+        </FlowUI>
     );
 }

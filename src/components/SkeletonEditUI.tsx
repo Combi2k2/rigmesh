@@ -8,7 +8,7 @@ import { SkeletonBone } from '@/utils/threeSkel';
 import { SkeletonJoint } from '@/utils/threeSkel';
 import { useScene } from '@/hooks/useScene';
 import ToolControlBar, { ToolMode } from '@/components/ToolControlBar';
-import Controller from '@/components/base/Controller';
+import FlowUI from '@/components/base/FlowUI';
 
 import { computeSkinWeightsGlobal } from '@/core/skin';
 import { skinnedMeshFromData } from '@/utils/threeMesh';
@@ -303,40 +303,37 @@ export default function SkelOpsUI({
     }, []);
 
     const steps = useMemo(() => [
-        {
-            name: 'Skeleton Refinement',
-            desc: "Click on a bone segment to select it. Press X to merge endpoints, or Space to split. Click a joint to select it, then use G/R/S to transform.",
-            params: [],
-        },
+        { name: 'Skeleton Refinement', desc: 'Edit joints and bones interactively.', params: [] },
     ], []);
 
+    const handleWireframeToggle = useCallback((enabled: boolean) => {
+        apiRef.current?.setViewWireframe(enabled);
+    }, []);
+    const handleSkeletonToggle = useCallback((enabled: boolean) => {
+        apiRef.current?.setViewSkeleton(enabled);
+    }, []);
+
     return (
-        <div className="absolute inset-0 z-50 flex flex-col sm:flex-row bg-white dark:bg-gray-900">
-            <div className="flex-1 min-w-0 min-h-0 relative">
-                <div ref={containerRef} className="w-full h-full" />
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40">
-                    <ToolControlBar
-                        activeTool={activeTool}
-                        cameraLocked={cameraLocked}
-                        onToolChange={handleToolChange}
-                        onLockToggle={handleLockToggle}
-                    />
-                </div>
+        <FlowUI
+            instructions="Click a bone segment to select it. Press X to merge endpoints, Space to split. Click a joint to select it, then use G/R/S to transform."
+            steps={steps}
+            currentStep={1}
+            onNext={onNext}
+            onBack={() => {}}
+            onCancel={onCancel}
+            onFinish={onNext}
+            onWireframeToggle={handleWireframeToggle}
+            onSkeletonToggle={handleSkeletonToggle}
+        >
+            <div ref={containerRef} className="w-full h-full" />
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40">
+                <ToolControlBar
+                    activeTool={activeTool}
+                    cameraLocked={cameraLocked}
+                    onToolChange={handleToolChange}
+                    onLockToggle={handleLockToggle}
+                />
             </div>
-            <div
-                role="complementary"
-                className="flex-shrink-0 w-full sm:w-80 border-l border-gray-700 bg-gray-900 overflow-auto shadow-xl flex flex-col"
-                data-mantine-color-scheme="dark"
-            >
-                <div className="p-4 flex-1 min-h-0">
-                    <Controller
-                        currentStep={1}
-                        onNext={onNext}
-                        onCancel={onCancel}
-                        steps={steps}
-                    />
-                </div>
-            </div>
-        </div>
+        </FlowUI>
     );
 }
