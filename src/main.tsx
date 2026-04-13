@@ -14,6 +14,8 @@ import { MeshCutParams } from '@/hooks/useMeshCut';
 import { MeshMergeParams } from '@/hooks/useMeshMerge';
 
 import * as THREE from 'three';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 
 import Scene from '@/components/base/Scene';
@@ -215,16 +217,96 @@ function App() {
         setShowSkelOpsUI(true);
     }, [clearSelection]);
 
-    // --- Export / Import (placeholder) ---
+    // --- Export / Import ---
 
     const handleExport = useCallback(() => {
-        // TODO: implement export
-        console.log('Export not yet implemented');
-    }, []);
+        if (!threeScene) return;
+
+        // Collect all meshes from the scene
+        const meshesToExport: THREE.SkinnedMesh[] = [];
+        threeScene.traverse((obj) => {
+            if (obj instanceof THREE.SkinnedMesh) {
+                meshesToExport.push(obj);
+            }
+        });
+
+        if (meshesToExport.length === 0) {
+            alert('No meshes to export. Create or import some meshes first.');
+            return;
+        }
+
+        // Create export scene and add cloned meshes (preserves skeleton hierarchy)
+        const exportScene = new THREE.Scene();
+        meshesToExport.forEach(mesh => {
+            const clonedMesh = cloneSkinnedMesh(mesh);
+            exportScene.add(clonedMesh);
+        });
+
+        const exporter = new GLTFExporter();
+        exporter.parse(
+            exportScene,
+            (result) => {
+                const blob = new Blob([result as ArrayBuffer], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `rigmesh_${new Date().getTime()}.glb`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+                console.log(`Exported ${meshesToExport.length} mesh(es) with skeleton`);
+            },
+            (error) => {
+                console.error('Export error:', error);
+                alert('Error exporting file: ' + error);
+            },
+            { binary: true }
+        );
+    }, [threeScene]);
 
     const handleImport = useCallback(() => {
-        // TODO: implement import
-        console.log('Import not yet implemented');
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.glb,.gltf';
+        input.onchange = (e) => {
+            const file = (e.target as HTMLInputElement).files?.[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    const arrayBuffer = event.target?.result;
+                    if (!(arrayBuffer instanceof ArrayBuffer)) return;
+
+                    const loader = new GLTFLoader();
+                    loader.parse(
+                        arrayBuffer,
+                        '',
+                        (gltf) => {
+                            // Add all loaded meshes to the scene
+                            gltf.scene.traverse((node) => {
+                                if (node instanceof THREE.SkinnedMesh) {
+                                    if (node.material instanceof THREE.MeshStandardMaterial) {
+                                        node.material.color.setHex(0xffffff);
+                                    }
+                                    sceneApiRef.current?.insertObject(node);
+                                }
+                            });
+                        },
+                        (error) => {
+                            console.error('Import error:', error);
+                            alert('Error importing file');
+                        }
+                    );
+                } catch (error) {
+                    console.error('File read error:', error);
+                    alert('Error reading file');
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        };
+        input.click();
     }, []);
 
     // --- Flow completions ---
