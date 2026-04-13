@@ -6,18 +6,21 @@ import './index.css';
 
 import { SceneProvider } from './context/SceneContext';
 import { SceneHooks } from '@/hooks/useScene';
-import { Vec2 } from '@/interface';
-import { Point } from '@/interface/point';
+
 import { cloneSkinnedMesh } from '@/utils/threeMesh';
 import { traceMesh } from '@/utils/threeSkel';
+import { MeshGenParams } from '@/hooks/useMeshGen';
+import { MeshCutParams } from '@/hooks/useMeshCut';
+import { MeshMergeParams } from '@/hooks/useMeshMerge';
+
 import * as THREE from 'three';
+
 
 import Scene from '@/components/base/Scene';
 import Sidebar from '@/components/base/Sidebar';
 import ToolOpsBar from '@/components/ToolOpsBar';
 import ToolNetBar from '@/components/ToolNetBar';
 import { ToolMode } from '@/components/ToolControlBar';
-import Canvas from '@/components/Canvas';
 import MeshGenUI from '@/components/MeshGenUI';
 import MeshCutUI from '@/components/MeshCutUI';
 import MeshMergeUI from '@/components/MeshMergeUI';
@@ -46,9 +49,29 @@ function App() {
     const [viewWireframe, setViewWireframe] = useState(false);
     const [viewSkeleton, setViewSkeleton] = useState(true);
 
+    // Flow parameters (persisted in app state)
+    const [genParams, setGenParams] = useState<MeshGenParams>({
+        isodistance: 10,
+        laplacianIters: 50,
+        laplacianAlpha: 0.5,
+        smoothFactor: 0.1,
+        isometricIterations: 6,
+        isometricLength: 5,
+        boneDevThreshold: 0.1,
+        boneLenThreshold: 5,
+        bonePruningThreshold: 5,
+    });
+    const [cutParams, setCutParams] = useState<MeshCutParams>({
+        smoothLayers: 0,
+        smoothFactor: 0.1,
+    });
+    const [mergeParams, setMergeParams] = useState<MeshMergeParams>({
+        smoothLayers: 0,
+        smoothFactor: 0.1,
+    });
+
     // Flow states
-    const [showCanvas, setShowCanvas] = useState(false);
-    const [meshGenPath, setMeshGenPath] = useState<Vec2[] | null>(null);
+    const [showMeshGenUI, setShowMeshGenUI] = useState(false);
     const [showCutUI, setShowCutUI] = useState(false);
     const [cuttingMesh, setCuttingMesh] = useState<THREE.SkinnedMesh | null>(null);
     const [showMergeUI, setShowMergeUI] = useState(false);
@@ -57,7 +80,6 @@ function App() {
     const [skelOpsMesh, setSkelOpsMesh] = useState<THREE.SkinnedMesh | null>(null);
 
     const sceneContainerRef = useRef<HTMLDivElement>(null);
-    const showMeshGenUI = meshGenPath !== null;
 
     // --- Scene ready ---
 
@@ -161,7 +183,7 @@ function App() {
         });
     }, []);
 
-    const handleDraw = useCallback(() => setShowCanvas(true), []);
+    const handleDraw = useCallback(() => setShowMeshGenUI(true), []);
 
     const handleCut = useCallback((mesh: THREE.SkinnedMesh) => {
         clearSelection([mesh]);
@@ -207,17 +229,12 @@ function App() {
 
     // --- Flow completions ---
 
-    const handlePathComplete = useCallback((path: Point[]) => {
-        setMeshGenPath(path as Vec2[]);
-        setShowCanvas(false);
-    }, []);
-
     const handleMeshGenComplete = useCallback((mesh: THREE.SkinnedMesh) => {
         if (mesh.material instanceof THREE.MeshStandardMaterial) {
             mesh.material.color.setHex(0xffffff);
         }
         sceneApiRef.current?.insertObject(mesh);
-        setMeshGenPath(null);
+        setShowMeshGenUI(false);
     }, []);
 
     const handleMeshCutComplete = useCallback((meshes: THREE.SkinnedMesh[]) => {
@@ -245,36 +262,12 @@ function App() {
         setSkelOpsMesh(null);
     }, [skelOpsMesh]);
 
-    // Apply wireframe visibility (SkinnedMesh only)
+    // Trigger resize when flow UIs open/close (their Scene instances need correct sizing)
+    const anyFlowOpen = showMeshGenUI || showCutUI || showMergeUI || showSkelOpsUI;
     useEffect(() => {
-        if (!threeScene) return;
-        threeScene.traverse(obj => {
-            if (obj instanceof THREE.SkinnedMesh) {
-                const mat = obj.material;
-                if (mat instanceof THREE.MeshStandardMaterial) {
-                    mat.wireframe = viewWireframe;
-                }
-            }
-        });
-    }, [threeScene, viewWireframe]);
-
-    // Apply skeleton helper visibility
-    useEffect(() => {
-        if (!threeScene) return;
-        threeScene.traverse(obj => {
-            if (obj.userData?.isHelper) {
-                obj.visible = viewSkeleton;
-            }
-        });
-    }, [threeScene, viewSkeleton]);
-
-    // Trigger resize when returning from meshgen
-    useEffect(() => {
-        if (!showMeshGenUI && sceneContainerRef.current) {
-            const id = setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
-            return () => clearTimeout(id);
-        }
-    }, [showMeshGenUI]);
+        const id = setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+        return () => clearTimeout(id);
+    }, [anyFlowOpen]);
 
     return (
         <div className="relative h-screen w-full overflow-hidden">
@@ -282,13 +275,14 @@ function App() {
             <div
                 ref={sceneContainerRef}
                 className="h-full w-full flex"
-                style={{ display: showMeshGenUI ? 'none' : 'flex' }}
             >
                 {/* 3D viewport */}
                 <div className="flex-1 min-w-0 min-h-0 relative">
                     <Scene
                         enableRig
                         enableTransform
+                        viewWireframe={viewWireframe}
+                        viewSkeleton={viewSkeleton}
                         onSceneReady={handleSceneReady}
                         onLeftClick={handleLeftClick}
                         onToolChange={handleToolChange}
@@ -322,53 +316,58 @@ function App() {
                 </div>
             </div>
 
-            {/* Overlay UIs */}
-            {showMeshGenUI && meshGenPath && (
-                <MeshGenUI
-                    path={meshGenPath}
-                    onComplete={handleMeshGenComplete}
-                    onCancel={() => setMeshGenPath(null)}
-                />
-            )}
+            {/* Flow UIs in floating overlay */}
+            {(showMeshGenUI || showCutUI || showMergeUI || showSkelOpsUI) && (
+                <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-8">
+                    <div className="w-[85vw] h-[85vh] bg-gray-900 border border-gray-700 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] relative overflow-hidden">
+                        {showMeshGenUI && (
+                            <MeshGenUI
+                                onComplete={handleMeshGenComplete}
+                                onCancel={() => setShowMeshGenUI(false)}
+                                initialParams={genParams}
+                                onParamsChange={setGenParams}
+                            />
+                        )}
 
-            {showCanvas && (
-                <div className="absolute inset-0 z-50 bg-white dark:bg-gray-900">
-                    <Canvas onPathComplete={handlePathComplete} />
+                        {showCutUI && cuttingMesh && (
+                            <MeshCutUI
+                                skinnedMesh={cuttingMesh}
+                                onComplete={handleMeshCutComplete}
+                                onCancel={() => { setShowCutUI(false); setCuttingMesh(null); }}
+                                initialParams={cutParams}
+                                onParamsChange={setCutParams}
+                            />
+                        )}
+
+                        {showMergeUI && mergingMeshes && (
+                            <MeshMergeUI
+                                mesh1={mergingMeshes[0]}
+                                mesh2={mergingMeshes[1]}
+                                onComplete={(mergedMesh) => {
+                                    if (mergedMesh.material instanceof THREE.MeshStandardMaterial) {
+                                        mergedMesh.material.color.setHex(0xffffff);
+                                    }
+                                    sceneApiRef.current?.insertObject(mergedMesh);
+                                    sceneApiRef.current?.removeObject(mergingMeshes[0]);
+                                    sceneApiRef.current?.removeObject(mergingMeshes[1]);
+                                    setShowMergeUI(false);
+                                    setMergingMeshes(null);
+                                }}
+                                onCancel={() => { setShowMergeUI(false); setMergingMeshes(null); }}
+                                initialParams={mergeParams}
+                                onParamsChange={setMergeParams}
+                            />
+                        )}
+
+                        {showSkelOpsUI && skelOpsMesh && (
+                            <SkelOpsUI
+                                skinnedMesh={skelOpsMesh}
+                                onComplete={handleSkelOpsComplete}
+                                onCancel={() => { setShowSkelOpsUI(false); setSkelOpsMesh(null); }}
+                            />
+                        )}
+                    </div>
                 </div>
-            )}
-
-            {showCutUI && cuttingMesh && (
-                <MeshCutUI
-                    skinnedMesh={cuttingMesh}
-                    onComplete={handleMeshCutComplete}
-                    onCancel={() => { setShowCutUI(false); setCuttingMesh(null); }}
-                />
-            )}
-
-            {showMergeUI && mergingMeshes && (
-                <MeshMergeUI
-                    mesh1={mergingMeshes[0]}
-                    mesh2={mergingMeshes[1]}
-                    onComplete={(mergedMesh) => {
-                        if (mergedMesh.material instanceof THREE.MeshStandardMaterial) {
-                            mergedMesh.material.color.setHex(0xffffff);
-                        }
-                        sceneApiRef.current?.insertObject(mergedMesh);
-                        sceneApiRef.current?.removeObject(mergingMeshes[0]);
-                        sceneApiRef.current?.removeObject(mergingMeshes[1]);
-                        setShowMergeUI(false);
-                        setMergingMeshes(null);
-                    }}
-                    onCancel={() => { setShowMergeUI(false); setMergingMeshes(null); }}
-                />
-            )}
-
-            {showSkelOpsUI && skelOpsMesh && (
-                <SkelOpsUI
-                    skinnedMesh={skelOpsMesh}
-                    onComplete={handleSkelOpsComplete}
-                    onCancel={() => { setShowSkelOpsUI(false); setSkelOpsMesh(null); }}
-                />
             )}
         </div>
     );
