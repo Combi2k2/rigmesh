@@ -8,20 +8,22 @@ import { Vec3, Plane } from '@/interface';
 export interface MeshCutState {
     currentStep: number;
     resultRef: RefObject<THREE.SkinnedMesh[] | null>;
+    plane: Plane | null;
 }
 export interface MeshCutParams {
     smoothLayers: number;
     smoothFactor: number;
 }
 
-export function useMeshCut(onCutComplete?: (meshes: THREE.SkinnedMesh[]) => void) {
+export function useMeshCut(onCutComplete?: (meshes: THREE.SkinnedMesh[]) => void, initialParams?: Partial<MeshCutParams>) {
     const [currentStep, setCurrentStep] = useState<number>(0);
     const [inputMesh, setInputMesh] = useState<THREE.SkinnedMesh | null>(null);
+    const [plane, setPlane] = useState<Plane | null>(null);
     const resultRef = useRef<THREE.SkinnedMesh[] | null>(null);
     const cutterRef = useRef<MeshCut | null>(null);
 
-    const [smoothLayers, setSmoothLayers] = useState<number>(0);
-    const [smoothFactor, setSmoothFactor] = useState<number>(0.1);
+    const [smoothLayers, setSmoothLayers] = useState<number>(initialParams?.smoothLayers ?? 0);
+    const [smoothFactor, setSmoothFactor] = useState<number>(initialParams?.smoothFactor ?? 0.1);
     
     const processStep1 = useCallback(() => {
         if (!inputMesh) return;
@@ -57,6 +59,7 @@ export function useMeshCut(onCutComplete?: (meshes: THREE.SkinnedMesh[]) => void
         const cutter = cutterRef.current;
         const meshes = cutter.runMeshSplit(plane);
         resultRef.current = meshes;
+        setPlane(plane);
     }, []);
 
     const onNext = useCallback(() => {
@@ -68,6 +71,7 @@ export function useMeshCut(onCutComplete?: (meshes: THREE.SkinnedMesh[]) => void
     const onReset = useCallback(() => {
         setCurrentStep(0);
         setInputMesh(null);
+        setPlane(null);
         cutterRef.current = null;
         resultRef.current = null;
     }, []);
@@ -94,6 +98,7 @@ export function useMeshCut(onCutComplete?: (meshes: THREE.SkinnedMesh[]) => void
     const state: MeshCutState = {
         currentStep,
         resultRef,
+        plane,
     };
 
     const params: MeshCutParams = {
@@ -101,14 +106,15 @@ export function useMeshCut(onCutComplete?: (meshes: THREE.SkinnedMesh[]) => void
         smoothFactor,
     };
 
-    const onFinish = useCallback((mesh: THREE.SkinnedMesh, plane: Plane) => {
-        const cutter = new MeshCut(mesh);
+    const onFinish = useCallback(() => {
+        if (!inputMesh || !plane) return null;
+        const cutter = new MeshCut(inputMesh);
         const meshes = cutter.runMeshSplit(plane);
         meshes.forEach(m => cutter.runMeshStitch(m));
         meshes.forEach(m => cutter.runMeshSmooth(m, smoothLayers, smoothFactor));
         meshes.forEach(m => cutter.computeSkinWeights(m));
         return meshes;
-    }, [smoothLayers, smoothFactor]);
+    }, [inputMesh, plane, smoothLayers, smoothFactor]);
 
     return {
         state,

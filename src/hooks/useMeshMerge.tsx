@@ -8,18 +8,20 @@ import { MergeParams } from '@/core/meshmerge';
 export interface MeshMergeState {
     currentStep: number;
     resultRef: RefObject<THREE.SkinnedMesh | null>;
+    param: MergeParams | null;
+    swap: boolean;
 }
 export interface MeshMergeParams {
     smoothLayers: number;
     smoothFactor: number;
 }
 
-export function useMeshMerge(onMergeComplete?: (mesh: THREE.SkinnedMesh) => void) {
+export function useMeshMerge(onMergeComplete?: (mesh: THREE.SkinnedMesh) => void, initialParams?: Partial<MeshMergeParams>) {
     const [currentStep, setCurrentStep] = useState<number>(0);
     const [mesh1, setMesh1] = useState<THREE.SkinnedMesh | null>(null);
     const [mesh2, setMesh2] = useState<THREE.SkinnedMesh | null>(null);
-    const [smoothLayers, setSmoothLayers] = useState<number>(0);
-    const [smoothFactor, setSmoothFactor] = useState<number>(0.1);
+    const [smoothLayers, setSmoothLayers] = useState<number>(initialParams?.smoothLayers ?? 0);
+    const [smoothFactor, setSmoothFactor] = useState<number>(initialParams?.smoothFactor ?? 0.1);
     const [swap, setSwap] = useState<boolean>(false);
     const [param, setParam] = useState<MergeParams | null>(null);
 
@@ -99,21 +101,24 @@ export function useMeshMerge(onMergeComplete?: (mesh: THREE.SkinnedMesh) => void
 
     const state: MeshMergeState = {
         currentStep,
-        resultRef
+        resultRef,
+        param,
+        swap,
     };
     const params: MeshMergeParams = {
         smoothLayers,
         smoothFactor,
     };
 
-    const onFinish = useCallback((m1: THREE.SkinnedMesh, m2: THREE.SkinnedMesh, mergeParam: MergeParams, shouldSwap: boolean) => {
-        const merger = shouldSwap ? new MeshMerge(m2, m1, mergeParam) : new MeshMerge(m1, m2, mergeParam);
+    const onFinish = useCallback(() => {
+        if (!mesh1 || !mesh2 || !param) return null;
+        const merger = swap ? new MeshMerge(mesh2, mesh1, param) : new MeshMerge(mesh1, mesh2, param);
         const result = merger.runTriangleRemoval();
         merger.runMeshStitch(result);
         merger.runMeshSmooth(result, smoothLayers, smoothFactor);
         merger.computeSkinWeights(result);
         return result;
-    }, [smoothLayers, smoothFactor]);
+    }, [mesh1, mesh2, param, swap, smoothLayers, smoothFactor]);
 
     return {
         state,
