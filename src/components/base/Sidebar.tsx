@@ -10,10 +10,17 @@ export interface SidebarProps extends SceneGraphProps {
     onSkeletonToggle: (value: boolean) => void;
 }
 
-export default function Sidebar({ scene, onSelect, viewWireframe, viewSkeleton, onWireframeToggle, onSkeletonToggle }: SidebarProps) {
+export default function Sidebar({
+    scene, onSelect,
+    viewWireframe,
+    viewSkeleton,
+    onWireframeToggle,
+    onSkeletonToggle,
+}: SidebarProps) {
     return (
-        <div className="flex flex-col h-full bg-[#252525] text-gray-300">
+        <div className="flex flex-col h-full bg-[#252525] text-gray-300 overflow-y-auto">
             <SceneGraph scene={scene} onSelect={onSelect} />
+
             <div className="px-3 py-3 border-t border-gray-700 flex flex-col gap-2">
                 <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Visibility</div>
                 <Checkbox

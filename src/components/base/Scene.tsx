@@ -9,6 +9,8 @@ import * as THREE from 'three';
 export interface SceneProps {
     enableRig?: boolean;
     enableTransform?: boolean;
+    viewWireframe?: boolean;
+    viewSkeleton?: boolean;
     onMeshSelect?: (mesh: THREE.SkinnedMesh) => void;
     onSceneReady?: (api: SceneHooks) => void;
     onLeftClick?: (mesh: THREE.SkinnedMesh | null, directMeshClick: boolean) => void;
@@ -24,6 +26,8 @@ export interface SceneProps {
 export default function Scene({
     enableRig = true,
     enableTransform = true,
+    viewWireframe = false,
+    viewSkeleton = true,
     onMeshSelect,
     onSceneReady,
     onLeftClick,
@@ -34,7 +38,7 @@ export default function Scene({
     const apiRef = useRef(sceneApi);
     apiRef.current = sceneApi;
 
-    const [activeTool, setActiveTool] = useState<ToolMode>('select');
+    const [activeTool,   setActiveTool]   = useState<ToolMode>('select');
     const [cameraLocked, setCameraLocked] = useState(false);
     const activeToolRef = useRef(activeTool);
     activeToolRef.current = activeTool;
@@ -59,7 +63,15 @@ export default function Scene({
 
     useEffect(() => {
         apiRef.current.setOrbitEnabled(!cameraLocked);
-    });
+    }, [cameraLocked]);
+
+    useEffect(() => {
+        apiRef.current.setViewWireframe(viewWireframe);
+    }, [viewWireframe]);
+
+    useEffect(() => {
+        apiRef.current.setViewSkeleton(viewSkeleton);
+    }, [viewSkeleton]);
 
     useEffect(() => {
         onSceneReady?.(apiRef.current);
